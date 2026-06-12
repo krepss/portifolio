@@ -61,15 +61,14 @@ export default async function handler(req, res) {
         return res.status(200).json(data.entities.map(t => ({ id: t.id, nome: t.name })));
       }
 
-     case 'buscarMembrosGrupo': {
+  case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        // Puxa os membros da equipe de trabalho configurada no Genesys Cloud [cite: 97]
+        // Puxa os membros da equipe configurada no Genesys Cloud
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
-        if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
+        if (data.erro || !data.entities) return res.status(200).json([]);
         
         const membrosFiltrados = data.entities
           .map(m => {
-            // O Genesys pode envelopar os dados em m.user ou direto na raiz do nó [cite: 98]
             let userObj = m.user || m || {};
             let idReal = userObj.id || m.id || '';
             let nomeReal = m.name || userObj.name || 'Operador';
@@ -82,7 +81,9 @@ export default async function handler(req, res) {
           .filter(m => m.id !== '' && m.nome !== 'Operador');
         
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json({ membros: membrosFiltrados });
+        
+        // RETORNO CORRIGIDO: Retorna o array puro direto, exatamente como o seu Index.html espera!
+        return res.status(200).json(membrosFiltrados);
       }
 
       case 'buscarWrapupsDaFila': {
