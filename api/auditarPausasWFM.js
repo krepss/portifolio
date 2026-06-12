@@ -6,18 +6,16 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
-  const { token, baseUrl, queueId, groupId, userId, intervaloIso } = req.body;
-  if (!token || !queueId || !intervaloIso) {
-    return res.status(200).json({ erro: 'Fila e Período de análise são obrigatórios.' });
+  const { token, baseUrl, groupId, userId, intervaloIso } = req.body;
+  if (!token || !groupId || !intervaloIso) {
+    return res.status(200).json({ erro: 'Equipe de trabalho e Período são obrigatórios.' });
   }
 
   let cleanUrl = (baseUrl || 'https://api.sae1.pure.cloud').trim().replace(/\/$/, '');
-
-  // CONFIGURAÇÃO REGRAS WFM DA BRISANET
   const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos de tolerância fixa
 
   try {
-    // 1. Dicionário de Presenças da Organização para traduzir IDs em nomes reais
+    // 1. Carregar dicionário de presenças do Genesys
     const dicPresencas = {};
     const resPres = await fetch(`${cleanUrl}/api/v2/presencedefinitions?pageSize=100`, {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
@@ -30,44 +28,40 @@ export default async function handler(req, res) {
         });
       }
     }
-    
-    // Mapeamento de termos comuns vindos do Genesys para as chaves internas
-    const traducoesPadrao = { 
-      "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", 
-      "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", 
-      "TRAINING": "Treinamento", "BUSY": "Ocupado" 
-    };
+    const traducoesPadrao = { "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
 
-    // 2. Determinar a lista de usuários alvos a serem pesquisados
-    let listaUsuariosAlvo = [];
+    // 2. BUSCA O CADASTRO COMPLETO DA EQUIPE (Para garantir que ninguém suma)
+    let mapeamentoEquipeCompleta = [];
     if (userId) {
-      listaUsuariosAlvo.push(userId);
-    } else if (groupId) {
+      // Se selecionou um agente único
+      try {
+        const rSingle = await fetch(`${cleanUrl}/api/v2/users/${userId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (rSingle.ok) {
+          const dSingle = await rSingle.json();
+          mapeamentoEquipeCompleta.push({ id: dSingle.id, nome: dSingle.name });
+        }
+      } catch {}
+    } else {
+      // Puxa todos os integrantes da equipe selecionada
       const resGrupo = await fetch(`${cleanUrl}/api/v2/teams/${groupId}/members?pageSize=100`, {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
       if (resGrupo.ok) {
         const dGrupo = await resGrupo.json();
-        if (dGrupo.entities) listaUsuariosAlvo = dGrupo.entities.map(m => m.id);
-      }
-    } else {
-      const resFila = await fetch(`${cleanUrl}/api/v2/routing/queues/${queueId}/members?pageSize=100`, {
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      if (resFila.ok) {
-        const dFila = await resFila.json();
-        if (dFila.entities) listaUsuariosAlvo = dFila.entities.map(m => m.id || m.user.id);
+        if (dGrupo.entities) {
+          mapeamentoEquipeCompleta = dGrupo.entities.map(m => ({ id: m.id, nome: m.name }));
+        }
       }
     }
 
-    if (listaUsuariosAlvo.length === 0) {
+    if (mapeamentoEquipeCompleta.length === 0) {
       return res.status(200).json({ ok: true, dados: [] });
     }
 
-    // 3. Query de Analytics para extrair Timeline de Presença
+    // 3. Consulta a Timeline de estados no Analytics para os usuários filtrados
     const payloadWfm = {
       "interval": intervaloIso,
-      "userFilters": [{ "type": "or", "predicates": listaUsuariosAlvo.map(id => ({ "dimension": "userId", "value": id })) }]
+      "userFilters": [{ "type": "or", "predicates": mapeamentoEquipeCompleta.map(m => ({ "dimension": "userId", "value": m.id })) }]
     };
 
     const resQuery = await fetch(`${cleanUrl}/api/v2/analytics/users/details/query`, {
@@ -77,35 +71,19 @@ export default async function handler(req, res) {
     });
 
     const dataQuery = await resQuery.json();
-    if (!resQuery.ok) return res.status(200).json({ erro: dataQuery.message || 'Erro ao extrair dados WFM' });
-
-    let relatorioFinal = [];
-
-    // Map para obter nomes dos agentes analisados
-    const cacheNomes = {};
-    if (dataQuery.userDetails) {
-      for (const u of dataQuery.userDetails) {
-        try {
-          const resUserObj = await fetch(`${cleanUrl}/api/v2/users/${u.userId}`, { headers: { 'Authorization': `Bearer ${token}` } });
-          if (resUserObj.ok) {
-            const duObj = await resUserObj.json();
-            cacheNomes[u.userId] = duObj.name;
-          }
-        } catch { cacheNomes[u.userId] = "Operador ID " + u.userId.substring(0,8); }
-      }
-
-      // 4. Varre a linha do tempo calculando os limites específicos
+    
+    // Mapeia os históricos retornados organizados por ID de Usuário
+    let timelinePorUsuario = {};
+    if (resQuery.ok && dataQuery.userDetails) {
       dataQuery.userDetails.forEach(u => {
-        let nomeAgente = cacheNomes[u.userId] || "Operador Desconhecido";
-        let historicoPausasAgente = [];
-        let totalEstourosAgente = 0;
+        let historicoPausas = [];
+        let totalEstouros = 0;
 
         if (u.primaryPresence) {
           u.primaryPresence.forEach(pres => {
             let pDefId = pres.presenceDefinitionId;
             let nomeStatus = dicPresencas[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
             
-            // Filtra estados de trabalho e offline para focar apenas nas pausas/afastamentos
             if (pres.systemPresence !== "AVAILABLE" && pres.systemPresence !== "OFFLINE" && pres.systemPresence !== "ON_QUEUE") {
               let inicio = new Date(pres.startTime);
               let fim = pres.endTime ? new Date(pres.endTime) : new Date();
@@ -115,40 +93,30 @@ export default async function handler(req, res) {
                 let tempoTotalMin = Math.floor(duracaoMs / 60000);
                 let estourou = false;
                 let tempoEstouroMin = 0;
-                let limitePausaEstipulado = "N/A";
 
                 let sysUpper = pres.systemPresence.toUpperCase();
                 let nomeUpper = nomeStatus.toUpperCase();
 
-                // Aplicação das regras de negócio solicitadas para Pausa Auricular (Break) e Refeição (Meal)
+                // Aplicação da regra rígida WFM de estouro (10m e 20m + 2m tolerância)
                 if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
-                  limitePausaEstipulado = 10;
-                  let limiteComToleranciaMs = (10 * 60000) + TOLERANCIA_GERAL_MS; // 12 minutos
-                  if (duracaoMs > limiteComToleranciaMs) {
+                  if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
                     estourou = true;
                     tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
                     totalEstourosAgente++;
                   }
-                } 
-                else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO") || nomeUpper.includes("LANCHE")) {
-                  limitePausaEstipulado = 20;
-                  let limiteComToleranciaMs = (20 * 60000) + TOLERANCIA_GERAL_MS; // 22 minutos
-                  if (duracaoMs > limiteComToleranciaMs) {
+                } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
+                  if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
                     estourou = true;
                     tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
                     totalEstourosAgente++;
                   }
                 }
 
-                let hLocalInicio = inicio.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-                let hLocalFim = pres.endTime ? fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : "Ainda em Pausa";
-
-                historicoPausasAgente.push({
+                historicoPausas.push({
                   status: nomeStatus,
-                  inicio: hLocalInicio,
-                  fim: hLocalFim,
+                  inicio: inicio.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+                  fim: pres.endTime ? fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : "Ainda em Pausa",
                   tempoTotalMin: tempoTotalMin,
-                  toleranciaConfigurada: limitePausaEstipulado,
                   estourou: estourou,
                   tempoEstouroMin: tempoEstouroMin
                 });
@@ -156,24 +124,36 @@ export default async function handler(req, res) {
             }
           });
         }
-
-        // ALTERAÇÃO CRÍTICA: Sempre adiciona o agente no relatório final (mesmo se não tiver estouros),
-        // desde que ele pertença à lista mapeada da equipe
-        relatorioFinal.push({
-          userId: u.userId,
-          nome: nomeAgente,
-          pausas: historicoPausasAgente, // Carrega o histórico completo de pausas realizadas no dia
-          totalEstourosNoPeriodo: totalEstourosAgente
-        });
+        
+        timelinePorUsuario[u.userId] = { pausas: historicoPausas };
       });
     }
 
-    // Ordenação do relatório: Quem tiver mais estouros acumulados fica no topo para chamar atenção da supervisão
-    relatorioFinal.sort((a, b) => b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo);
+    // 4. ALINHAMENTO FINAL (Garante 100% da equipe unificada na tabela)
+    let resultadoFinal = mapeamentoEquipeCompleta.map(agenteCadastro => {
+      let dadosTimeline = timelinePorUsuario[agenteCadastro.id] || { pausas: [] };
+      let listaDePausas = dadosTimeline.pausas;
+      let totalEstouros = listaDePausas.filter(p => p.estourou).length;
 
-    return res.status(200).json({ ok: true, dados: relatorioFinal });
+      return {
+        userId: agenteCadastro.id,
+        nome: agenteCadastro.nome,
+        pausas: listaDePausas, // Histórico completo do dia de trabalho
+        totalEstourosNoPeriodo: totalEstouros
+      };
+    });
+
+    // Ordenação inteligente: Quem tem estouros graves WFM sobe; quem trabalhou certinho fica logo abaixo em ordem alfabética
+    resultadoFinal.sort((a, b) => {
+      if (b.totalEstourosNoPeriodo !== a.totalEstourosNoPeriodo) {
+        return b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo;
+      }
+      return a.nome.localeCompare(b.nome);
+    });
+
+    return res.status(200).json({ ok: true, dados: resultadoFinal });
 
   } catch (e) {
-    return res.status(200).json({ erro: 'Erro WFM Interno: ' + e.message });
+    return res.status(200).json({ erro: 'Erro Crítico no WFM: ' + e.message });
   }
 }
