@@ -877,9 +877,21 @@ function selecionarItemDropdown(id, itemId, itemNome) {
     if (itemId) {
       callApi('buscarMembrosGrupo', { teamId: itemId })
         .then(function(res) {
-          // Captura a lista de dentro da propriedade .membros enviada pelo novo backend
-          var listaAgentes = res.membros || [];
-          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(listaAgentes);
+          // Garante a captura do array independentemente do formato da resposta
+          var rawList = res.membros || res || [];
+          
+          // Uniformiza os dados para garantir que contêm as chaves 'id' e 'nome'
+          var listaTratada = rawList.map(function(m) {
+            return {
+              id: m.id || '',
+              nome: m.nome || m.name || 'Operador Desconhecido'
+            };
+          });
+
+          // Concatena com a opção padrão de todos os agentes
+          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(listaTratada);
+          
+          // Alimenta o dropdown wfm-agente
           popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
         })
         .catch(function(e) { 
