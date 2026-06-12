@@ -63,26 +63,26 @@ export default async function handler(req, res) {
         return res.status(200).json(data.entities.map(t => ({ id: t.id, nome: t.name })));
       }
 
-      case 'buscarMembrosGrupo': {
+     case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        // Removido o expand=user que às vezes limita o retorno e forçada a paginação limpa
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
-        if (data.erro || !data.entities) return res.status(200).json([]);
+        if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
         
-        const membros = data.entities.map(m => {
-          // O Genesys pode devolver o nome na raiz do membro (m.name) ou dentro do objeto interno do usuário (m.user.name)
-          let nomeDetectado = m.name || (m.user && m.user.name) || 'Operador Desconhecido';
-          return {
-            id: m.id || (m.user && m.user.id),
-            nome: nomeDetectado
-          };
-        });
+        const membrosFiltrados = data.entities
+          .map(m => {
+            let idDetectado = m.id || (m.user && m.user.id) || '';
+            let nomeDetectado = m.name || (m.user && m.user.name) || 'Operador Desconhecido';
+            return {
+              id: idDetectado,
+              nome: nomeDetectado,
+              name: nomeDetectado // Duplicado em inglês por segurança de mapeamento
+            };
+          })
+          .filter(m => m.id !== '');
         
-        // Remove duplicados ou IDs inválidos por segurança
-        const membrosFiltrados = membros.filter(m => m.id && m.nome !== 'Operador Desconhecido');
-
-        // Ordena de A-Z pelo nome dos agentes
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
+        
+        // Retorna a estrutura das duas formas para que o frontend nunca leia nulo
         return res.status(200).json({ membros: membrosFiltrados });
       }
       case 'carregarDadosDashboard': {
