@@ -65,24 +65,29 @@ export default async function handler(req, res) {
 
      case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
+        // Faz a chamada para a API de membros da equipa do Genesys
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
         if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
         
         const membrosFiltrados = data.entities
           .map(m => {
-            let idDetectado = m.id || (m.user && m.user.id) || '';
-            let nomeDetectado = m.name || (m.user && m.user.name) || 'Operador Desconhecido';
+            // Correção Crítica: No Genesys Cloud, os dados do agente vêm dentro do objeto 'user'
+            let userObj = m.user || {};
+            let idDetectado = userObj.id || m.id || '';
+            let nomeDetectado = userObj.name || m.name || 'Operador Desconhecido';
+            
             return {
               id: idDetectado,
               nome: nomeDetectado,
-              name: nomeDetectado // Duplicado em inglês por segurança de mapeamento
+              name: nomeDetectado
             };
           })
-          .filter(m => m.id !== '');
+          // Filtra para garantir que não entram registos vazios ou falhados
+          .filter(m => m.id !== '' && m.nome !== 'Operador Desconhecido');
         
+        // Ordena de A-Z pelo nome dos agentes
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
         
-        // Retorna a estrutura das duas formas para que o frontend nunca leia nulo
         return res.status(200).json({ membros: membrosFiltrados });
       }
       case 'carregarDadosDashboard': {
