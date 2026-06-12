@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
-  // Captura a ação dinamicamente através do parâmetro action na URL
+  // Captura a ação dinamicamente através do parâmetro action na URL ou no corpo
   const urlParts = req.url.split('?');
   const actionPath = urlParts[0].replace('/api/', '').replace('/api', '').trim();
   const action = actionPath || req.query.action || req.body.action;
@@ -61,28 +61,19 @@ export default async function handler(req, res) {
         return res.status(200).json(data.entities.map(t => ({ id: t.id, nome: t.name })));
       }
 
-  case 'buscarMembrosGrupo': {
+      case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        // Puxa os membros da equipe configurada no Genesys Cloud
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
         if (data.erro || !data.entities) return res.status(200).json([]);
         
-        const membrosFiltrados = data.entities
-          .map(m => {
-            let userObj = m.user || m || {};
-            let idReal = userObj.id || m.id || '';
-            let nomeReal = m.name || userObj.name || 'Operador';
-            
-            return {
-              id: idReal,
-              nome: nomeReal
-            };
-          })
-          .filter(m => m.id !== '' && m.nome !== 'Operador');
-        
+        const membrosFiltrados = data.entities.map(m => {
+          let userObj = m.user || m || {};
+          let idReal = userObj.id || m.id || '';
+          let nomeReal = m.name || userObj.name || 'Operador';
+          return { id: idReal, nome: nomeReal };
+        }).filter(m => m.id !== '' && m.nome !== 'Operador');
+
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        
-        // RETORNO CORRIGIDO: Retorna o array puro direto, exatamente como o seu Index.html espera!
         return res.status(200).json(membrosFiltrados);
       }
 
@@ -252,30 +243,18 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, novoStatus: 'Offline' });
       }
 
-      // =================================═════════════════════
-      //  CORREÇÃO CRÍTICA: AUDITORIA OUTBOUND COM NOMES E TABULAÇÕES REAIS
-      // =================================═════════════════════
       case 'processarAuditoriaOutbound': {
         const { idFila, intervaloStr } = req.body;
-
-        // Caches locais para otimizar performance e garantir a tradução dos IDs
         const cacheNomes = {};
         const cacheWrapups = {};
 
-        // 1. MAPEAMENTO E CACHE DOS WRAP-UPS (FINALIZAÇÕES) DA FILA
         try {
-          // Busca todas as tabulações vinculadas à fila do Genesys Cloud
           const rW = await callGenesys(`/api/v2/routing/queues/${idFila}/wrapupcodes?pageSize=100`);
           if (rW && rW.entities) {
-            rW.entities.forEach(w => { 
-              cacheWrapups[w.id] = w.name; 
-            });
+            rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
           }
-        } catch(e) { 
-          console.error("Falha ao carregar cache de tabulações:", e); 
-        }
+        } catch(e) {}
 
-        // 2. MAPEAMENTO E CACHE DE NOMES DOS AGENTES DA FILA
         try {
           const rUsersFila = await callGenesys(`/api/v2/routing/queues/${idFila}/members?pageSize=100`);
           if (rUsersFila && rUsersFila.entities) {
@@ -284,24 +263,14 @@ export default async function handler(req, res) {
               if (uObj.id) cacheNomes[uObj.id] = uObj.name || m.name || "Operador";
             });
           }
-        } catch (e) { 
-          console.error("Falha ao carregar cache de nomes:", e); 
-        }
+        } catch (e) {}
 
         let paginaAtual = 1; let temMaisDados = true; let agrupamento = {};
 
-        // 3. EXTRAÇÃO CRÍTICA DAS CONVERSAS DO ANALYTICS
         while (temMaisDados) {
           const payload = { 
             "interval": intervaloStr, 
-            "segmentFilters": [{ 
-              "type": "and", 
-              "predicates": [ 
-                {"dimension": "mediaType", "value": "voice"}, 
-                {"dimension": "direction", "value": "outbound"}, 
-                {"dimension": "queueId", "value": idFila} 
-              ] 
-            }], 
+            "segmentFilters": [{ "type": "and", "predicates": [ {"dimension": "mediaType", "value": "voice"}, {"dimension": "direction", "value": "outbound"}, {"dimension": "queueId", "value": idFila} ] }], 
             "paging": {"pageSize": 100, "pageNumber": paginaAtual} 
           };
           
@@ -358,7 +327,6 @@ export default async function handler(req, res) {
                 else if (soNumeros.startsWith('0') && soNumeros.length >= 11) ddd = soNumeros.substring(1, 3);
                 else if (soNumeros.length >= 10) ddd = soNumeros.substring(0, 2);
 
-                // Armazena no agrupamento incluindo o wrapupId na chave única
                 let chave = `${dataFormatada}|${ddd}|${numeroLimpo}|${agenteId}|${wrapupId || 'Sem'}`;
                 if (!agrupamento[chave]) agrupamento[chave] = { tentativas: 0, detalhes: [] }; 
                 agrupamento[chave].tentativas++; 
@@ -369,34 +337,22 @@ export default async function handler(req, res) {
           }
         }
         
-        // 4. MONTAGEM DO RELATÓRIO COM TRADUÇÃO DOS CACHES
         let linhasRelatorio = []; let chaves = Object.keys(agrupamento);
         for (let k = 0; k < chaves.length; k++) { 
           let partes = chaves[k].split("|");
-          
-          // Regra original: Só joga para o relatório se for caso de insistência (mais de 1 tentativa)
           if (agrupamento[chaves[k]].tentativas > 1) {
             let aId = partes[3];
             let wId = partes[4];
-            
-            // Traduz o ID do agente usando o cache pré-carregado
             let nomeOperadorFinal = cacheNomes[aId] || "Agente (" + aId.substring(0,5) + ")";
-            
-            // Traduz o ID da finalização usando o cache pré-carregado WFM
             let nomeFinalizacaoFinal = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
 
             linhasRelatorio.push({ 
-              data: partes[0], 
-              ddd: partes[1], 
-              numero: partes[2], 
-              agente: nomeOperadorFinal, 
-              wrapup: nomeFinalizacaoFinal, 
-              tentativas: agrupamento[chaves[k]].tentativas,
-              detalhes: agrupamento[chaves[k]].detalhes 
+              data: partes[0], ddd: partes[1], numero: partes[2], 
+              agente: nomeOperadorFinal, wrapup: nomeFinalizacaoFinal, 
+              tentativas: agrupamento[chaves[k]].tentativas, detalhes: agrupamento[chaves[k]].detalhes 
             });
           } 
         }
-        
         linhasRelatorio.sort((a, b) => b.tentativas - a.tentativas);
         return res.status(200).json({ error: false, data: linhasRelatorio });
       }
@@ -414,121 +370,125 @@ export default async function handler(req, res) {
         const cData = await callGenesys(`/api/v2/conversations/${conversationId}`);
         let cliente = cData.participants?.find(p => p.purpose === 'customer')?.name || 'Desconhecido';
         let agente = cData.participants?.find(p => p.purpose === 'agent')?.name || 'Operador';
-        
         let prompt = `Analise a retenção Brisanet do cliente ${cliente}. Prompt customizado: ${customPrompt || 'Padrão'}`;
-        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado e cliente retido com sucesso.</p>";
+        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado.</p>";
         
         if (provider === 'gemini') {
           const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
           const gJson = await gRes.json();
           if (gJson.candidates?.[0]?.content?.parts?.[0]?.text) iaResult = gJson.candidates[0].content.parts[0].text;
         }
-        
         return res.status(200).json({ ok: true, relatorioHTML: iaResult.split('===')[1] || iaResult, cliente, agente, wrapup: 'Retenção', desfechoLote: 'Retido', id: conversationId });
       }
 
       case 'auditarPausasWFM': {
-      const { groupId, userId, intervaloIso } = req.body;
-      const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos fixa
+        const { groupId, userId, intervaloIso } = req.body;
+        const TOLERANCIA_GERAL_MS = 2 * 60000;
 
-      const dicPresencas = {};
-      const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
-      if (resPres.entities) {
-        resPres.entities.forEach(p => {
-          dicPresencas[p.id] = (p.languageLabels && (p.languageLabels["pt-BR"] || p.languageLabels["pt_BR"])) || p.name;
-        });
-      }
-      const traducoesPadrao = { "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
-
-      let mapeamentoEquipeCompleta = [];
-      if (userId) {
-        try {
-          const rSingle = await callGenesys(`/api/v2/users/${userId}`);
-          if (!rSingle.erro) mapeamentoEquipeCompleta.push({ id: rSingle.id, nome: rSingle.name });
-        } catch {}
-      } else {
-        // Busca todos os integrantes do time enviado
-        const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
-        if (dg.entities) {
-          dg.entities.forEach(m => {
-            let userObj = m.user || m || {};
-            let idReal = userObj.id || m.id;
-            let nomeReal = m.name || userObj.name || "Operador";
-            if (idReal) {
-              mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
-            }
+        const dicPresencas = {};
+        const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
+        if (resPres.entities) {
+          resPres.entities.forEach(p => {
+            dicPresencas[p.id] = (p.languageLabels && (p.languageLabels["pt-BR"] || p.languageLabels["pt_BR"])) || p.name;
           });
         }
-      }
+        const traducoesPadrao = { "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
 
-      if (mapeamentoEquipeCompleta.length === 0) return res.status(200).json({ ok: true, dados: [] });
-
-      const payloadWfm = {
-        "interval": intervaloIso,
-        "userFilters": [{ "type": "or", "predicates": mapeamentoEquipeCompleta.map(m => ({ "dimension": "userId", "value": m.id })) }]
-      };
-
-      const dataQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadWfm);
-      let timelinePorUsuario = {};
-
-      if (!dataQuery.erro && dataQuery.userDetails) {
-        dataQuery.userDetails.forEach(u => {
-          let historicoPausas = [];
-          if (u.primaryPresence) {
-            u.primaryPresence.forEach(pres => {
-              let pDefId = pres.presenceDefinitionId;
-              let nomeStatus = dicPresencas[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
-              
-              if (pres.systemPresence !== "AVAILABLE" && pres.systemPresence !== "OFFLINE" && pres.systemPresence !== "ON_QUEUE") {
-                let inicio = new Date(pres.startTime);
-                let fim = pres.endTime ? new Date(pres.endTime) : new Date();
-                let duracaoMs = fim.getTime() - inicio.getTime();
-
-                if (duracaoMs > 0) {
-                  let tempoTotalMin = Math.floor(duracaoMs / 60000);
-                  let estourou = false; let tempoEstouroMin = 0;
-                  let sysUpper = pres.systemPresence.toUpperCase();
-                  let nomeUpper = nomeStatus.toUpperCase();
-
-                  // Regra corrigida: removido o incremento fantasma "totalEstourosAgente++"
-                  if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
-                    if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
-                      estourou = true; 
-                      tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
-                    }
-                  } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
-                    if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
-                      estourou = true; 
-                      tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
-                    }
-                  }
-
-                  historicoPausas.push({
-                    status: nomeStatus,
-                    inicio: inicio.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
-                    fim: pres.endTime ? fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : "Ainda em Pausa",
-                    tempoTotalMin: tempoTotalMin,
-                    estourou: estourou,
-                    tempoEstouroMin: tempoEstouroMin
-                  });
-                }
+        let mapeamentoEquipeCompleta = [];
+        if (userId) {
+          try {
+            const rSingle = await callGenesys(`/api/v2/users/${userId}`);
+            if (!rSingle.erro) mapeamentoEquipeCompleta.push({ id: rSingle.id, nome: rSingle.name });
+          } catch {}
+        } else {
+          const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
+          if (dg.entities) {
+            dg.entities.forEach(m => {
+              let userObj = m.user || m || {};
+              let idReal = userObj.id || m.id;
+              let nomeReal = m.name || userObj.name || "Operador";
+              if (idReal) {
+                mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
               }
             });
           }
-          timelinePorUsuario[u.userId] = { pausas: historicoPausas };
+        }
+
+        if (mapeamentoEquipeCompleta.length === 0) return res.status(200).json({ ok: true, dados: [] });
+
+        const payloadWfm = {
+          "interval": intervaloIso,
+          "userFilters": [{ "type": "or", "predicates": mapeamentoEquipeCompleta.map(m => ({ "dimension": "userId", "value": m.id })) }]
+        };
+
+        const dataQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadWfm);
+        let timelinePorUsuario = {};
+
+        if (!dataQuery.erro && dataQuery.userDetails) {
+          dataQuery.userDetails.forEach(u => {
+            let historicoPausas = [];
+            if (u.primaryPresence) {
+              u.primaryPresence.forEach(pres => {
+                let pDefId = pres.presenceDefinitionId;
+                let nomeStatus = dicPresencas[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
+                
+                if (pres.systemPresence !== "AVAILABLE" && pres.systemPresence !== "OFFLINE" && pres.systemPresence !== "ON_QUEUE") {
+                  let inicio = new Date(pres.startTime);
+                  let fim = pres.endTime ? new Date(pres.endTime) : new Date();
+                  let duracaoMs = fim.getTime() - inicio.getTime();
+
+                  if (duracaoMs > 0) {
+                    let tempoTotalMin = Math.floor(duracaoMs / 60000);
+                    let estourou = false; let tempoEstouroMin = 0;
+                    let sysUpper = pres.systemPresence.toUpperCase();
+                    let nomeUpper = nomeStatus.toUpperCase();
+
+                    if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
+                      if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
+                        estourou = true; 
+                        tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
+                      }
+                    } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
+                      if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
+                        estourou = true; 
+                        tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
+                      }
+                    }
+
+                    historicoPausas.push({
+                      status: nomeStatus,
+                      inicio: inicio.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+                      fim: pres.endTime ? fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : "Ainda em Pausa",
+                      tempoTotalMin: tempoTotalMin,
+                      estourou: estourou,
+                      tempoEstouroMin: tempoEstouroMin
+                    });
+                  }
+                }
+              });
+            }
+            timelinePorUsuario[u.userId] = { pausas: historicoPausas };
+          });
+        }
+
+        let resultadoFinal = mapeamentoEquipeCompleta.map(ag => {
+          let tData = timelinePorUsuario[ag.id] || { pausas: [] };
+          return {
+            userId: ag.id, 
+            nome: ag.nome, 
+            pausas: tData.pausas,
+            totalEstourosNoPeriodo: tData.pausas.filter(p => p.estourou).length
+          };
         });
+
+        resultadoFinal.sort((a, b) => b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo || a.nome.localeCompare(b.nome));
+        return res.status(200).json({ ok: true, dados: resultadoFinal });
       }
 
-      let resultadoFinal = mapeamentoEquipeCompleta.map(ag => {
-        let tData = timelinePorUsuario[ag.id] || { pausas: [] };
-        return {
-          userId: ag.id, 
-          nome: ag.nome, 
-          pausas: tData.pausas,
-          totalEstourosNoPeriodo: tData.pausas.filter(p => p.estourou).length
-        };
-      });
-
-      resultadoFinal.sort((a, b) => b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo || a.nome.localeCompare(b.nome));
-      return res.status(200).json({ ok: true, dados: resultadoFinal });
+      default:
+        return res.status(404).json({ erro: `Ação operacional '${action}' desconhecida no roteador.` });
     }
+  } catch (e) {
+    return res.status(200).json({ erro: 'Exceção capturada no Roteador: ' + e.message });
+  }
+}
