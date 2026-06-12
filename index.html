@@ -530,22 +530,10 @@ tbody tr:hover td { background: var(--bg); }
     <div id="aba-pausas-wfm" class="aba-conteudo">
       <div class="control-bar" style="background: var(--laranja-bg); border-color: var(--laranja-bd);">
         <div class="cb-item">
-          <label style="color: var(--laranja);">Fila Alvo</label>
-          <div class="cs-wrap" style="width:200px">
-            <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-fila',event)">
-              <span id="label-wfm-fila" class="cs-label">— Escolha a Fila —</span><span class="cs-arrow">▼</span>
-            </div>
-            <div class="cs-menu" id="menu-wfm-fila">
-              <input type="text" class="cs-search" placeholder="🔍 Buscar..." onkeyup="filterDropdown('wfm-fila',this.value)" onclick="event.stopPropagation()">
-              <ul class="cs-list" id="ul-wfm-fila"></ul>
-            </div>
-          </div>
-        </div>
-        <div class="cb-item">
           <label style="color: var(--laranja);">Equipe / Grupo</label>
-          <div class="cs-wrap" style="width:200px">
+          <div class="cs-wrap" style="width:240px">
             <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-grupo',event)">
-              <span id="label-wfm-grupo" class="cs-label">— Todas as Equipes —</span><span class="cs-arrow">▼</span>
+              <span id="label-wfm-grupo" class="cs-label">— Escolha a Equipe —</span><span class="cs-arrow">▼</span>
             </div>
             <div class="cs-menu" id="menu-wfm-grupo">
               <input type="text" class="cs-search" placeholder="🔍 Buscar..." onkeyup="filterDropdown('wfm-grupo',this.value)" onclick="event.stopPropagation()">
@@ -554,8 +542,8 @@ tbody tr:hover td { background: var(--bg); }
           </div>
         </div>
         <div class="cb-item">
-          <label style="color: var(--laranja);">Agente Único</label>
-          <div class="cs-wrap" style="width:200px">
+          <label style="color: var(--laranja);">Agente Único (Opcional)</label>
+          <div class="cs-wrap" style="width:240px">
             <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-agente',event)">
               <span id="label-wfm-agente" class="cs-label">— Todos os Agentes —</span><span class="cs-arrow">▼</span>
             </div>
@@ -564,10 +552,6 @@ tbody tr:hover td { background: var(--bg); }
               <ul class="cs-list" id="ul-wfm-agente"></ul>
             </div>
           </div>
-        </div>
-        <div class="cb-item">
-          <label style="color: var(--laranja);">Tolerância WFM (Min.)</label>
-          <input type="number" id="wfm-tolerancia" value="15" min="1" max="120" style="border-color: var(--laranja); padding: 8px; width: 90px; min-width: 90px;">
         </div>
         <div class="cb-item">
           <label style="color: var(--laranja);">Período de Análise</label>
@@ -587,7 +571,8 @@ tbody tr:hover td { background: var(--bg); }
             </div>
           </div>
         </div>
-        <button class="btn btn-primary" style="background: var(--laranja); font-weight: 800; padding: 10px 16px;" onclick="acionarAuditoriaPausas()">⏱ Auditar</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary" style="background: var(--laranja); font-weight: 800; padding: 10px 20px;" onclick="acionarAuditoriaPausas()">⏱ Auditar Pausas</button>
       </div>
 
       <div class="vazio" id="wfm-vazio">
