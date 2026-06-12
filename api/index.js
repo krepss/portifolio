@@ -61,18 +61,26 @@ export default async function handler(req, res) {
         return res.status(200).json(data.entities.map(t => ({ id: t.id, nome: t.name })));
       }
 
-      case 'buscarMembrosGrupo': {
+     case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
+        // Puxa os membros da equipe de trabalho configurada no Genesys Cloud [cite: 97]
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
         if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
         
-        const membrosFiltrados = data.entities.map(m => {
-          let userObj = m.user || {};
-          let idDetectado = userObj.id || m.id || '';
-          let nomeDetectado = m.name || userObj.name || 'Operador Desconhecido';
-          return { id: idDetectado, nome: nomeDetectado };
-        }).filter(m => m.id !== '');
-
+        const membrosFiltrados = data.entities
+          .map(m => {
+            // O Genesys pode envelopar os dados em m.user ou direto na raiz do nó [cite: 98]
+            let userObj = m.user || m || {};
+            let idReal = userObj.id || m.id || '';
+            let nomeReal = m.name || userObj.name || 'Operador';
+            
+            return {
+              id: idReal,
+              nome: nomeReal
+            };
+          })
+          .filter(m => m.id !== '' && m.nome !== 'Operador');
+        
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
         return res.status(200).json({ membros: membrosFiltrados });
       }
