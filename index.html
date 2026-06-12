@@ -877,11 +877,16 @@ function selecionarItemDropdown(id, itemId, itemNome) {
     if (itemId) {
       callApi('buscarMembrosGrupo', { teamId: itemId })
         .then(function(res) {
-          // res deve retornar um array de objetos [{id, nome}] vindo da nossa nova rota
-          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(res || []);
+          // Captura a lista de dentro da propriedade .membros enviada pelo novo backend
+          var listaAgentes = res.membros || [];
+          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(listaAgentes);
           popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
         })
-        .catch(function(e) { showToast('Erro ao carregar agentes da equipe'); });
+        .catch(function(e) { 
+          console.error(e);
+          document.getElementById('label-wfm-agente').textContent = 'Erro ao carregar';
+          showToast('Erro ao carregar agentes da equipe'); 
+        });
     } else {
       popularDropdown('wfm-agente', [{id:'', nome:'— Todos os Agentes —'}], '— Todos os Agentes —');
     }
