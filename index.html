@@ -32,7 +32,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .login-wrap { width: 100%; max-width: 480px; }
 .login-header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
 .logo-box { width: 48px; height: 48px; background: var(--laranja); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(255,80,34,.35); }
-.logo-box svg { width: 28px; height: 28px; fill: #fff; }
 .brand-name { font-size: 22px; font-weight: 800; letter-spacing: -.4px; }
 .brand-name span { color: var(--laranja); }
 .brand-sub { font-size: 12px; color: var(--text-sm); font-weight: 500; margin-top: 2px; }
@@ -91,7 +90,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .tb-hora { font-size: 12px; color: var(--text-sm); }
 .tb-hora strong { color: var(--text); }
 .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; margin-left: 6px; animation: pulseGlow 2s infinite; }
-@keyframes pulseGlow { 0%{opacity:.3;transform:scale(.9)} 50%{opacity:1;transform:scale(1.1)} 100%{opacity:.3;transform:scale(.9)} }
 
 /* TABS */
 .top-tabs { display: flex; background: var(--surface); padding: 0 24px; border-bottom: 1px solid var(--border); gap: 20px; overflow-x: auto; }
@@ -108,12 +106,12 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .cb-item select:focus, .cb-item input:focus { border-color: var(--azul); background: #fff; }
 
 /* DROPDOWN CUSTOMIZADO */
-.cs-wrap { position: relative; width: 260px; font-family: var(--font); font-size: 13px; }
+.cs-wrap { position: relative; width: 220px; font-family: var(--font); font-size: 13px; }
 .cs-box { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; color: var(--text); font-weight: 600; transition: border-color .2s; }
 .cs-box:hover { border-color: var(--azul); background: #fff; }
-.cs-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.cs-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 .cs-arrow { font-size: 10px; color: var(--text-sm); flex-shrink: 0; }
-.cs-menu { position: absolute; top: 100%; left: 0; width: 100%; min-width: 260px; margin-top: 4px; background: #fff; border: 1.5px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); z-index: 999; display: none; flex-direction: column; overflow: hidden; }
+.cs-menu { position: absolute; top: 100%; left: 0; width: 100%; min-width: 220px; margin-top: 4px; background: #fff; border: 1.5px solid var(--border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); z-index: 999; display: none; flex-direction: column; overflow: hidden; }
 .cs-menu.open { display: flex; }
 .cs-search { padding: 10px 12px; border: none; border-bottom: 1px solid var(--border); font-size: 13px; outline: none; background: #fdfdfd; font-family: var(--font); }
 .cs-list { list-style: none; max-height: 250px; overflow-y: auto; margin: 0; padding: 0; }
@@ -311,7 +309,7 @@ tbody tr:hover td { background: var(--bg); }
 
   <div class="dash-body">
 
-    <div id="aba-dash" class="aba-conteudo activa">
+    <div id="aba-dash" class="aba-conteudo ativa">
       <div class="control-bar">
         <div class="cb-item">
           <label>Fila de Atendimento</label>
@@ -533,7 +531,7 @@ tbody tr:hover td { background: var(--bg); }
       <div class="control-bar" style="background: var(--laranja-bg); border-color: var(--laranja-bd);">
         <div class="cb-item">
           <label style="color: var(--laranja);">Fila Alvo</label>
-          <div class="cs-wrap" style="width:240px">
+          <div class="cs-wrap" style="width:200px">
             <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-fila',event)">
               <span id="label-wfm-fila" class="cs-label">— Escolha a Fila —</span><span class="cs-arrow">▼</span>
             </div>
@@ -544,22 +542,63 @@ tbody tr:hover td { background: var(--bg); }
           </div>
         </div>
         <div class="cb-item">
-          <label style="color: var(--laranja);">Tolerância Alerta (Minutos)</label>
-          <input type="number" id="wfm-tolerancia" value="15" min="1" max="120" style="border-color: var(--laranja); padding: 8px; width: 140px;">
+          <label style="color: var(--laranja);">Equipe / Grupo</label>
+          <div class="cs-wrap" style="width:200px">
+            <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-grupo',event)">
+              <span id="label-wfm-grupo" class="cs-label">— Todas as Equipes —</span><span class="cs-arrow">▼</span>
+            </div>
+            <div class="cs-menu" id="menu-wfm-grupo">
+              <input type="text" class="cs-search" placeholder="🔍 Buscar..." onkeyup="filterDropdown('wfm-grupo',this.value)" onclick="event.stopPropagation()">
+              <ul class="cs-list" id="ul-wfm-grupo"></ul>
+            </div>
+          </div>
         </div>
-        <div style="flex:1"></div>
-        <button class="btn btn-primary" style="background: var(--laranja); font-weight: 800;" onclick="acionarAuditoriaPausas()">⏱ Auditar Pausas</button>
+        <div class="cb-item">
+          <label style="color: var(--laranja);">Agente Único</label>
+          <div class="cs-wrap" style="width:200px">
+            <div class="cs-box" style="border-color: var(--laranja);" onclick="toggleDropdown('wfm-agente',event)">
+              <span id="label-wfm-agente" class="cs-label">— Todos os Agentes —</span><span class="cs-arrow">▼</span>
+            </div>
+            <div class="cs-menu" id="menu-wfm-agente">
+              <input type="text" class="cs-search" placeholder="🔍 Buscar..." onkeyup="filterDropdown('wfm-agente',this.value)" onclick="event.stopPropagation()">
+              <ul class="cs-list" id="ul-wfm-agente"></ul>
+            </div>
+          </div>
+        </div>
+        <div class="cb-item">
+          <label style="color: var(--laranja);">Tolerância WFM (Min.)</label>
+          <input type="number" id="wfm-tolerancia" value="15" min="1" max="120" style="border-color: var(--laranja); padding: 8px; width: 90px; min-width: 90px;">
+        </div>
+        <div class="cb-item">
+          <label style="color: var(--laranja);">Período de Análise</label>
+          <div class="cb-row">
+            <select id="wfm-tipo-data" onchange="alternarCamposData('wfm')" style="border-color: var(--laranja); min-width:110px">
+              <option value="hoje">Hoje</option>
+              <option value="mes">Por Mês</option>
+              <option value="diario">Data Específica</option>
+              <option value="intervalo">Intervalo</option>
+            </select>
+            <div id="wfm-wrapper-mes" style="display:none"><input type="month" id="wfm-data-mes" style="border-color: var(--laranja);"/></div>
+            <div id="wfm-wrapper-diario" style="display:none"><input type="date" id="wfm-data-unica" style="border-color: var(--laranja);"/></div>
+            <div id="wfm-wrapper-intervalo" style="display:none;align-items:center;gap:4px">
+              <input type="date" id="wfm-data-ini" style="border-color: var(--laranja);"/>
+              <span style="font-size:11px;font-weight:700;color:var(--text-sm)">Até</span>
+              <input type="date" id="wfm-data-fim" style="border-color: var(--laranja);"/>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="background: var(--laranja); font-weight: 800; padding: 10px 16px;" onclick="acionarAuditoriaPausas()">⏱ Auditar</button>
       </div>
 
       <div class="vazio" id="wfm-vazio">
         <div class="ico">⏱</div>
-        <h3>Auditoria de Estouro de Pausas</h3>
-        <p>Identifica operadores em tempo real que ultrapassaram o limite de tolerância WFM.</p>
+        <h3>Auditoria Estatística e Estouro de Pausas</h3>
+        <p>Utilize os filtros acima para cruzar equipes, agentes únicos e períodos cronológicos de estouro.</p>
       </div>
 
       <div class="carregando" id="wfm-loading" style="display:none">
         <div class="big-spin" style="border-top-color: var(--laranja)"></div>
-        <span>Escaneando status dos agentes...</span>
+        <span>Escaneando timeline WFM e calculando limites...</span>
       </div>
 
       <div id="wfm-conteudo" style="display:none; flex-direction:column; gap:24px"></div>
@@ -581,6 +620,7 @@ tbody tr:hover td { background: var(--bg); }
 </div>
 
 <div class="toast" id="toast"></div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 //  ESTADO GLOBAL
@@ -603,6 +643,9 @@ var S = {
   loteIdsArray: [],
   loteResultadosAcumulados: [],
   wfmFilaId: null,
+  wfmGrupoId: null,
+  wfmAgenteId: null,
+  wfmListaCompletaAgentes: []
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -633,7 +676,7 @@ window.addEventListener('load', function() {
   var hojeStr = hoje.getFullYear()+'-'+pad(hoje.getMonth()+1)+'-'+pad(hoje.getDate());
   var mesStr  = hojeStr.substring(0,7);
 
-  ['dash','aud','lote'].forEach(function(p) {
+  ['dash','aud','lote','wfm'].forEach(function(p) {
     var du = document.getElementById(p+'-data-unica'); if(du) du.value = hojeStr;
     var di = document.getElementById(p+'-data-ini');   if(di) di.value = hojeStr;
     var df = document.getElementById(p+'-data-fim');   if(df) df.value = hojeStr;
@@ -654,7 +697,6 @@ window.addEventListener('load', function() {
     }
   });
 
-  // Migrado para LocalStorage (dispensa properties do Google Apps Script)
   var savedToken = localStorage.getItem('genesys_token');
   var savedUrl = localStorage.getItem('genesys_url');
   if (savedToken) {
@@ -750,7 +792,7 @@ function iniciarApp() {
       popularDropdown('dash-fila',  lista, '— Selecione a Fila —');
       popularDropdown('aud-fila',   lista, '— Selecione a Fila —');
       popularDropdown('lote-fila',  lista, '— Escolha a Fila —');
-      popularDropdown('wfm-fila',   lista, '— Escolha a Fila —'); // Adicionado
+      popularDropdown('wfm-fila',   lista, '— Escolha a Fila —');
     })
     .catch(function(e){ showToast('Erro ao carregar filas: '+e.message); });
 
@@ -759,6 +801,7 @@ function iniciarApp() {
       if (!equipes || equipes.erro) return;
       var lista = [{id:'', nome:'— Todas as Equipes —'}].concat(equipes);
       popularDropdown('dash-grupo', lista, '— Todas as Equipes —');
+      popularDropdown('wfm-grupo',  lista, '— Todas as Equipes —');
     })
     .catch(function(e){ console.error(e); });
 }
@@ -840,7 +883,31 @@ function selecionarItemDropdown(id, itemId, itemNome) {
       .catch(function(e){ showToast('Erro ao carregar wrapups: ' + e.message); });
   }
   if (id === 'lote-wrapup') { S.loteWrapupId = itemId; }
-  if (id === 'wfm-fila')   { S.wfmFilaId = itemId; } // Adicionado
+  
+  if (id === 'wfm-fila')    { 
+    S.wfmFilaId = itemId; 
+    document.getElementById('label-wfm-agente').textContent = 'Sincronizando agentes...';
+    callApi('carregarDadosDashboard', { queueId: itemId, intervaloIso: obterIntervaloFormatado('wfm'), ehHoje: false })
+      .then(function(res) {
+         S.wfmListaCompletaAgentes = res.agentes || [];
+         var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(S.wfmListaCompletaAgentes.map(a => ({ id: a.id, nome: a.nome })));
+         popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
+         S.wfmAgenteId = null;
+      });
+  }
+  if (id === 'wfm-grupo') {
+    S.wfmGrupoId = itemId || null;
+    if (S.wfmFilaId) {
+      document.getElementById('label-wfm-agente').textContent = 'Filtrando equipe...';
+      callApi('carregarDadosDashboard', { queueId: S.wfmFilaId, groupId: itemId || null, intervaloIso: obterIntervaloFormatado('wfm'), ehHoje: false })
+        .then(function(res) {
+           var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat((res.agentes || []).map(a => ({ id: a.id, nome: a.nome })));
+           popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
+           S.wfmAgenteId = null;
+        });
+    }
+  }
+  if (id === 'wfm-agente')   { S.wfmAgenteId = itemId || null; }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1454,55 +1521,101 @@ function dlCSV(rows, nome) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
-  function acionarAuditoriaPausas() {
+// ══════════════════════════════════════════════════════════════
+//  AUDITORIA DE PAUSAS WFM
+// ══════════════════════════════════════════════════════════════
+function acionarAuditoriaPausas() {
   if (!S.wfmFilaId) return showToast('Selecione uma fila para auditar as pausas.');
+  var intervalo = obterIntervaloFormatado('wfm');
+  if (!intervalo) return showToast('Configure o período de análise corretamente.');
   var tolerancia = document.getElementById('wfm-tolerancia').value || 15;
 
   document.getElementById('wfm-vazio').style.display    = 'none';
   document.getElementById('wfm-conteudo').style.display = 'none';
   document.getElementById('wfm-loading').style.display  = 'flex';
 
-  callApi('auditarPausasWFM', { queueId: S.wfmFilaId, toleranciaMinutos: parseInt(tolerancia) })
-    .then(function(r) {
-      document.getElementById('wfm-loading').style.display = 'none';
-      if (r.erro) { showToast(r.erro); return; }
-      renderAuditoriaPausas(r.excedidos || []);
-      document.getElementById('wfm-conteudo').style.display = 'flex';
-    })
-    .catch(function(e) {
-      document.getElementById('wfm-loading').style.display = 'none';
-      showToast('Erro ao processar pausas: ' + e.message);
-    });
+  callApi('auditarPausasWFM', { 
+    queueId: S.wfmFilaId, 
+    groupId: S.wfmGrupoId, 
+    userId: S.wfmAgenteId, 
+    intervaloIso: intervalo, 
+    toleranciaMinutos: parseInt(tolerancia) 
+  })
+  .then(function(r) {
+    document.getElementById('wfm-loading').style.display = 'none';
+    if (r.erro) { showToast(r.erro); return; }
+    window._wfmDadosAtuais = r.dados || [];
+    renderAuditoriaPausas(window._wfmDadosAtuais);
+    document.getElementById('wfm-conteudo').style.display = 'flex';
+  })
+  .catch(function(e) {
+    document.getElementById('wfm-loading').style.display = 'none';
+    showToast('Erro ao processar pausas: ' + e.message);
+  });
 }
 
 function renderAuditoriaPausas(lista) {
   var cont = document.getElementById('wfm-conteudo');
-  if (!lista.length) {
-    cont.innerHTML = '<div class="vazio"><div class="ico">✅</div><h3>Tudo em conformidade!</h3><p>Nenhum operador ultrapassou o tempo de tolerância configurado até o momento.</p></div>';
+  if (!lista || !lista.length) {
+    cont.innerHTML = '<div class="vazio"><div class="ico">✅</div><h3>Tudo em conformidade!</h3><p>Nenhum registro de pausa ou estouro encontrado para a seleção solicitada.</p></div>';
     return;
   }
 
   var html = '<div class="table-wrap">';
-  html += '<div class="table-toolbar" style="background:#FEE2E2; border-bottom:1px solid var(--err-bd)">';
-  html += '<span style="color:var(--err); font-weight:700">⚠ ' + lista.length + ' operador(es) em estouro de pausa crítica</span></div>';
+  html += '<div class="table-toolbar" style="background:#FFFBF0; border-bottom:1px solid var(--warn-bd)">';
+  html += '<span style="color:var(--navy); font-weight:700">📋 Relatório de Estouro e Timeline Operacional</span></div>';
   html += '<div class="tab-scroll"><table>';
-  html += '<thead><tr><th>Agente</th><th>Pausa Atual</th><th>Tempo Decorrido</th><th>Tolerância WFM</th><th>Estouro Excedido</th></tr></thead><tbody>';
+  html += '<thead><tr><th>Agente</th><th style="text-align:center">Eventos de Pausa</th><th style="text-align:center">Casos de Estouro Crítico</th><th style="text-align:center">Ações</th></tr></thead><tbody>';
 
-  lista.forEach(function(a) {
-    var estouroMin = Math.floor(a.tempoEstouroMs / 60000);
-    var decorridoMin = Math.floor(a.tempoTotalMs / 60000);
-
-    html += '<tr style="background:#FFF5F5">';
+  lista.forEach(function(a, idx) {
+    var totalPausas = a.pausas.length;
+    var classeLinha = a.totalEstourosNoPeriodo > 0 ? 'background:#FFF5F5' : 'background:#fff';
+    
+    html += '<tr style="' + classeLinha + '">';
     html += '<td class="td-nome">' + esc(a.nome) + '</td>';
-    html += '<td><span class="badge b-break"><span class="badge-dot"></span>' + esc(a.status) + '</span></td>';
-    html += '<td style="font-weight:600; color:var(--text);">' + decorridoMin + ' min</td>';
-    html += '<td style="color:var(--text-sm);">' + a.toleranciaConfigurada + ' min</td>';
-    html += '<td style="color:var(--err); font-weight:800; font-size:14px;">⚠ +' + estouroMin + ' min excedidos</td>';
+    html += '<td style="text-align:center"><span class="num-badge">' + totalPausas + ' pausas registradas</span></td>';
+    html += '<td style="text-align:center">';
+    if (a.totalEstourosNoPeriodo > 0) {
+      html += '<span style="background:var(--err); color:#fff; padding:3px 10px; font-weight:800; border-radius:20px; font-size:12px;">⚠ ' + a.totalEstourosNoPeriodo + ' estouros</span>';
+    } else {
+      html += '<span style="background:var(--ok); color:#fff; padding:3px 10px; font-weight:700; border-radius:20px; font-size:11px;">✔ OK (No Limite)</span>';
+    }
+    html += '</td>';
+    html += '<td style="text-align:center"><button class="btn-tb" style="border-color:var(--laranja); color:var(--laranja); font-weight:700" onclick="toggleDetalhamentoLinha(' + idx + ')">👁 Detalhar Pausas</button></td>';
     html += '</tr>';
+    
+    // Sub-Linha oculta que contém o detalhamento cronológico das pausas
+    html += '<tr id="wfm-detalhe-row-' + idx + '" style="display:none; background:#F8FAFC;"><td colspan="4" style="padding:15px 24px; border-bottom: 2px solid var(--border);">';
+    html += '<div style="font-size:11px; font-weight:700; color:var(--text-sm); text-transform:uppercase; margin-bottom:10px; letter-spacing:0.5px;">⏳ Histórico Cronológico de Status (Período)</div>';
+    html += '<table style="width:100%; border:1px solid var(--border); border-radius:8px; background:#fff; white-space:nowrap;">';
+    html += '<thead style="background:var(--bg)"><tr><th style="font-size:10px; padding:6px 12px;">Motivo/Pausa</th><th style="font-size:10px; padding:6px 12px;">Horário Entrada</th><th style="font-size:10px; padding:6px 12px;">Horário Saída</th><th style="font-size:10px; padding:6px 12px; text-align:center">Tempo Gasto</th><th style="font-size:10px; padding:6px 12px; text-align:center">Resultado WFM</th></tr></thead><tbody>';
+    
+    a.pausas.forEach(function(p) {
+      var statusBadgeWfm = p.estourou 
+        ? '<span style="color:var(--err); font-weight:800;">⚠ Estourou (+' + p.tempoEstouroMin + ' min)</span>' 
+        : '<span style="color:var(--ok); font-weight:600;">✔ Dentro da Tolerância</span>';
+        
+      html += '<tr>';
+      html += '<td style="padding:8px 12px; font-weight:600; color:var(--navy);">' + esc(p.status) + '</td>';
+      html += '<td style="padding:8px 12px; color:var(--text-md); font-size:12px;">' + p.inicio + '</td>';
+      html += '<td style="padding:8px 12px; color:var(--text-md); font-size:12px;">' + p.fim + '</td>';
+      html += '<td style="padding:8px 12px; text-align:center; font-weight:700;">' + p.tempoTotalMin + ' min</td>';
+      html += '<td style="padding:8px 12px; text-align:center;">' + statusBadgeWfm + '</td>';
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table></td></tr>';
   });
 
   html += '</tbody></table></div></div>';
   cont.innerHTML = html;
+}
+
+function toggleDetalhamentoLinha(idx) {
+  var row = document.getElementById('wfm-detalhe-row-' + idx);
+  if (row) {
+    row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+  }
 }
 </script>
 
@@ -1596,7 +1709,6 @@ function fecharModalAuditoria() {
   if (modal) modal.style.display = 'none';
 }
 
-// Fechar modal clicando no fundo escuro
 document.addEventListener('DOMContentLoaded', function() {
   var overlay = document.getElementById('modal-deslogar');
   if (overlay) {
@@ -1604,14 +1716,12 @@ document.addEventListener('DOMContentLoaded', function() {
       if (e.target === overlay) fecharModalDeslogar();
     });
   }
-  // Fechar modal de auditoria clicando no fundo
   var audOverlay = document.getElementById('aud-modal');
   if (audOverlay) {
     audOverlay.addEventListener('click', function(e) {
       if (e.target === audOverlay) audOverlay.style.display = 'none';
     });
   }
-  // Fechar modal de lote clicando no fundo
   var loteOverlay = document.getElementById('lote-modal');
   if (loteOverlay) {
     loteOverlay.addEventListener('click', function(e) {
