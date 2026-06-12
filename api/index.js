@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
-  // Captura a ação dinamicamente através do parâmetro action na URL
+  // Captura a ação dinamicamente através do parâmetro action na URL ou no corpo
   const urlParts = req.url.split('?');
   const actionPath = urlParts[0].replace('/api/', '').replace('/api', '').trim();
   const action = actionPath || req.query.action || req.body.action;
@@ -64,17 +64,17 @@ export default async function handler(req, res) {
       case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
-        if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
+        if (data.erro || !data.entities) return res.status(200).json([]);
         
         const membrosFiltrados = data.entities.map(m => {
-          let userObj = m.user || {};
-          let idDetectado = userObj.id || m.id || '';
-          let nomeDetectado = m.name || userObj.name || 'Operador Desconhecido';
-          return { id: idDetectado, nome: nomeDetectado };
-        }).filter(m => m.id !== '');
+          let userObj = m.user || m || {};
+          let idReal = userObj.id || m.id || '';
+          let nomeReal = m.name || userObj.name || 'Operador';
+          return { id: idReal, nome: nomeReal };
+        }).filter(m => m.id !== '' && m.nome !== 'Operador');
 
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json({ membros: membrosFiltrados });
+        return res.status(200).json(membrosFiltrados);
       }
 
       case 'buscarWrapupsDaFila': {
@@ -96,11 +96,26 @@ export default async function handler(req, res) {
         const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres.entities) {
           resPres.entities.forEach(p => {
-            dicPresencas[p.id] = (p.languageLabels && (p.languageLabels["pt-BR"] || p.languageLabels["pt_BR"])) || p.name;
+            let pName = p.name;
+            if (p.languageLabels) {
+              if (p.languageLabels["pt-BR"]) pName = p.languageLabels["pt-BR"];
+              else if (p.languageLabels["pt_BR"]) pName = p.languageLabels["pt_BR"];
+            }
+            dicPresencas[p.id] = pName;
           });
         }
         
-        const traducoesPadrao = { "Available": "Disponível", "Break": "Pausa Básica", "Meal": "Pausa Refeição", "Meeting": "Reunião", "Training": "Treinamento", "Away": "Ausente do PC", "Busy": "Ocupado" };
+        // Mapeamento idêntico ao "traducoesPadrao" do teu cod.gs original
+        const traducoesPadrao = {
+          "Available": "Disponível", "AVAILABLE": "Disponível",
+          "Break": "Pausa Básica", "BREAK": "Pausa Básica",
+          "Meal": "Pausa Refeição", "MEAL": "Pausa Refeição",
+          "Meeting": "Reunião", "MEETING": "Reunião",
+          "Training": "Treinamento", "TRAINING": "Treinamento",
+          "Away": "Ausente do PC", "AWAY": "Ausente do PC",
+          "Busy": "Ocupado", "BUSY": "Ocupado"
+        };
+
         let agentes = []; let paginaAtual = 1; let temMaisDados = true; let interagindoAgoraGlobal = 0;
 
         while (temMaisDados) {
@@ -127,14 +142,24 @@ export default async function handler(req, res) {
             
             let statusAmigavel = "Offline"; let tipoClass = "offline";
             if (sysPresence !== "Offline") {
-              if (sysPresence === "On Queue") {
+              if (sysPresence === "On Queue" || sysPresence === "OnQueue") {
                 if (rStatus === "INTERACTING" || rStatus === "COMMUNICATING") { statusAmigavel = "Em Atendimento"; tipoClass = "busy"; }
                 else if (rStatus === "NOT_RESPONDING") { statusAmigavel = "Não Respondendo"; tipoClass = "away"; }
                 else { statusAmigavel = "Disponível"; tipoClass = "available"; }
               } else {
                 let statusSecundario = dicPresencas[presenceDef.id] || presenceDef.name || "";
-                statusAmigavel = traducoesPadrao[statusSecundario] || statusSecundario || sysPresence;
-                tipoClass = (sysPresence === "Available" || sysPresence === "Interacting") ? "acw" : "break";
+                
+                // RESTAURAÇÃO DA PRIORIDADE ORIGINAL: Traduz o status secundário se ele existir
+                if (statusSecundario) {
+                  statusAmigavel = traducoesPadrao[statusSecundario] || traducoesPadrao[statusSecundario.toUpperCase()] || statusSecundario;
+                } else {
+                  statusAmigavel = traducoesPadrao[sysPresence] || traducoesPadrao[sysPresence.toUpperCase()] || sysPresence;
+                }
+
+                if (sysPresence === "Available" || sysPresence === "Interacting") {
+                   if (sysPresence === "Interacting") statusAmigavel = "Fora da Fila / Pessoal";
+                   tipoClass = "acw";
+                } else { tipoClass = "break"; }
               }
             }
             
@@ -242,27 +267,19 @@ export default async function handler(req, res) {
         await callGenesys(`/api/v2/users/${userId}/presences/PURECLOUD`, 'patch', { presenceDefinition: { id: offId } });
         return res.status(200).json({ ok: true, novoStatus: 'Offline' });
       }
-case 'processarAuditoriaOutbound': {
-        const { idFila, intervaloStr } = req.body;
 
-        // Caches locais para otimizar performance e garantir a tradução dos IDs
+      case 'processarAuditoriaOutbound': {
+        const { idFila, intervaloStr } = req.body;
         const cacheNomes = {};
         const cacheWrapups = {};
 
-        // 1. MAPEAMENTO E CACHE DOS WRAP-UPS (FINALIZAÇÕES) DA FILA
         try {
-          // Busca todas as tabulações vinculadas à fila do Genesys Cloud
           const rW = await callGenesys(`/api/v2/routing/queues/${idFila}/wrapupcodes?pageSize=100`);
           if (rW && rW.entities) {
-            rW.entities.forEach(w => { 
-              cacheWrapups[w.id] = w.name; 
-            });
+            rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
           }
-        } catch(e) { 
-          console.error("Falha ao carregar cache de tabulações:", e); 
-        }
+        } catch(e) {}
 
-        // 2. MAPEAMENTO E CACHE DE NOMES DOS AGENTES DA FILA
         try {
           const rUsersFila = await callGenesys(`/api/v2/routing/queues/${idFila}/members?pageSize=100`);
           if (rUsersFila && rUsersFila.entities) {
@@ -271,24 +288,14 @@ case 'processarAuditoriaOutbound': {
               if (uObj.id) cacheNomes[uObj.id] = uObj.name || m.name || "Operador";
             });
           }
-        } catch (e) { 
-          console.error("Falha ao carregar cache de nomes:", e); 
-        }
+        } catch (e) {}
 
         let paginaAtual = 1; let temMaisDados = true; let agrupamento = {};
 
-        // 3. EXTRAÇÃO CRÍTICA DAS CONVERSAS DO ANALYTICS
         while (temMaisDados) {
           const payload = { 
             "interval": intervaloStr, 
-            "segmentFilters": [{ 
-              "type": "and", 
-              "predicates": [ 
-                {"dimension": "mediaType", "value": "voice"}, 
-                {"dimension": "direction", "value": "outbound"}, 
-                {"dimension": "queueId", "value": idFila} 
-              ] 
-            }], 
+            "segmentFilters": [{ "type": "and", "predicates": [ {"dimension": "mediaType", "value": "voice"}, {"dimension": "direction", "value": "outbound"}, {"dimension": "queueId", "value": idFila} ] }], 
             "paging": {"pageSize": 100, "pageNumber": paginaAtual} 
           };
           
@@ -345,7 +352,6 @@ case 'processarAuditoriaOutbound': {
                 else if (soNumeros.startsWith('0') && soNumeros.length >= 11) ddd = soNumeros.substring(1, 3);
                 else if (soNumeros.length >= 10) ddd = soNumeros.substring(0, 2);
 
-                // Armazena no agrupamento incluindo o wrapupId na chave única
                 let chave = `${dataFormatada}|${ddd}|${numeroLimpo}|${agenteId}|${wrapupId || 'Sem'}`;
                 if (!agrupamento[chave]) agrupamento[chave] = { tentativas: 0, detalhes: [] }; 
                 agrupamento[chave].tentativas++; 
@@ -356,34 +362,22 @@ case 'processarAuditoriaOutbound': {
           }
         }
         
-        // 4. MONTAGEM DO RELATÓRIO COM TRADUÇÃO DOS CACHES
         let linhasRelatorio = []; let chaves = Object.keys(agrupamento);
         for (let k = 0; k < chaves.length; k++) { 
           let partes = chaves[k].split("|");
-          
-          // Regra original: Só joga para o relatório se for caso de insistência (mais de 1 tentativa)
           if (agrupamento[chaves[k]].tentativas > 1) {
             let aId = partes[3];
             let wId = partes[4];
-            
-            // Traduz o ID do agente usando o cache pré-carregado
             let nomeOperadorFinal = cacheNomes[aId] || "Agente (" + aId.substring(0,5) + ")";
-            
-            // Traduz o ID da finalização usando o cache pré-carregado WFM
             let nomeFinalizacaoFinal = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
 
             linhasRelatorio.push({ 
-              data: partes[0], 
-              ddd: partes[1], 
-              numero: partes[2], 
-              agente: nomeOperadorFinal, 
-              wrapup: nomeFinalizacaoFinal, 
-              tentativas: agrupamento[chaves[k]].tentativas,
-              detalhes: agrupamento[chaves[k]].detalhes 
+              data: partes[0], ddd: partes[1], numero: partes[2], 
+              agente: nomeOperadorFinal, wrapup: nomeFinalizacaoFinal, 
+              tentativas: agrupamento[chaves[k]].tentativas, detalhes: agrupamento[chaves[k]].detalhes 
             });
           } 
         }
-        
         linhasRelatorio.sort((a, b) => b.tentativas - a.tentativas);
         return res.status(200).json({ error: false, data: linhasRelatorio });
       }
@@ -401,31 +395,31 @@ case 'processarAuditoriaOutbound': {
         const cData = await callGenesys(`/api/v2/conversations/${conversationId}`);
         let cliente = cData.participants?.find(p => p.purpose === 'customer')?.name || 'Desconhecido';
         let agente = cData.participants?.find(p => p.purpose === 'agent')?.name || 'Operador';
-        
         let prompt = `Analise a retenção Brisanet do cliente ${cliente}. Prompt customizado: ${customPrompt || 'Padrão'}`;
-        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado e cliente retido com sucesso.</p>";
+        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado.</p>";
         
         if (provider === 'gemini') {
           const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
           const gJson = await gRes.json();
           if (gJson.candidates?.[0]?.content?.parts?.[0]?.text) iaResult = gJson.candidates[0].content.parts[0].text;
         }
-        
         return res.status(200).json({ ok: true, relatorioHTML: iaResult.split('===')[1] || iaResult, cliente, agente, wrapup: 'Retenção', desfechoLote: 'Retido', id: conversationId });
       }
 
-      // =================================═════════════════════
-      //  CORREÇÃO CRÍTICA: MOTOR E CRUIZAMENTO COMPLETO DE PAUSAS WFM Meta 10m/20m
-      // =================================═════════════════════
       case 'auditarPausasWFM': {
         const { groupId, userId, intervaloIso } = req.body;
-        const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos fixa
+        const TOLERANCIA_GERAL_MS = 2 * 60000;
 
         const dicPresencas = {};
         const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres.entities) {
           resPres.entities.forEach(p => {
-            dicPresencas[p.id] = (p.languageLabels && (p.languageLabels["pt-BR"] || p.languageLabels["pt_BR"])) || p.name;
+            let pName = p.name;
+            if (p.languageLabels) {
+              if (p.languageLabels["pt-BR"]) pName = p.languageLabels["pt-BR"];
+              else if (p.languageLabels["pt_BR"]) pName = p.languageLabels["pt_BR"];
+            }
+            dicPresencas[p.id] = pName;
           });
         }
         const traducoesPadrao = { "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
@@ -440,8 +434,12 @@ case 'processarAuditoriaOutbound': {
           const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
           if (dg.entities) {
             dg.entities.forEach(m => {
-              let uObj = m.user || m || {};
-              if (uObj.id) mapeamentoEquipeCompleta.push({ id: uObj.id, nome: m.name || uObj.name || "Operador" });
+              let userObj = m.user || m || {};
+              let idReal = userObj.id || m.id;
+              let nomeReal = m.name || userObj.name || "Operador";
+              if (idReal) {
+                mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
+              }
             });
           }
         }
@@ -477,11 +475,13 @@ case 'processarAuditoriaOutbound': {
 
                     if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
                       if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
+                        estourou = true; 
+                        tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
                       }
                     } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
                       if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
+                        estourou = true; 
+                        tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
                       }
                     }
 
@@ -504,7 +504,9 @@ case 'processarAuditoriaOutbound': {
         let resultadoFinal = mapeamentoEquipeCompleta.map(ag => {
           let tData = timelinePorUsuario[ag.id] || { pausas: [] };
           return {
-            userId: ag.id, nome: ag.nome, pausas: tData.pausas,
+            userId: ag.id, 
+            nome: ag.nome, 
+            pausas: tData.pausas,
             totalEstourosNoPeriodo: tData.pausas.filter(p => p.estourou).length
           };
         });
