@@ -599,12 +599,12 @@ tbody tr:hover td { background: var(--bg); }
 
       <!-- NOVO: Dashboard Agentes por Pausa -->
       <div style="background: var(--surface); border: 1px solid var(--laranja-bd); border-radius: var(--radius); padding: 20px 24px; box-shadow: var(--shadow);">
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
-          <div>
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px;">
+          <div style="flex:1; min-width:0;">
             <div style="font-size:15px; font-weight:800; color:var(--navy);">🔎 Agentes por Tipo de Pausa</div>
             <div style="font-size:12px; color:var(--text-sm); margin-top:3px;">Selecione uma equipe e um período acima, depois clique em um tipo de pausa para ver quais agentes a utilizaram.</div>
           </div>
-          <button class="btn btn-primary" style="background:var(--laranja); padding:9px 18px; font-size:13px;" onclick="acionarDashAgentsPorPausa()">🔄 Carregar Pausas</button>
+          <button class="btn btn-primary" style="background:var(--laranja); padding:9px 18px; font-size:13px; white-space:nowrap; flex-shrink:0;" onclick="acionarDashAgentsPorPausa()">🔄 Carregar Pausas</button>
         </div>
 
         <div id="pbp-loading" style="display:none; padding:24px; text-align:center; color:var(--text-sm);">
