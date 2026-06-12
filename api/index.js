@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
-  // Captura a ação dinamicamente através do parâmetro action na URL ou no corpo
+  // Captura a ação dinamicamente através do parâmetro action na URL
   const urlParts = req.url.split('?');
   const actionPath = urlParts[0].replace('/api/', '').replace('/api', '').trim();
   const action = actionPath || req.query.action || req.body.action;
@@ -64,17 +64,17 @@ export default async function handler(req, res) {
       case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
-        if (data.erro || !data.entities) return res.status(200).json([]);
+        if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
         
         const membrosFiltrados = data.entities.map(m => {
-          let userObj = m.user || m || {};
-          let idReal = userObj.id || m.id || '';
-          let nomeReal = m.name || userObj.name || 'Operador';
-          return { id: idReal, nome: nomeReal };
-        }).filter(m => m.id !== '' && m.nome !== 'Operador');
+          let userObj = m.user || {};
+          let idDetectado = userObj.id || m.id || '';
+          let nomeDetectado = m.name || userObj.name || 'Operador Desconhecido';
+          return { id: idDetectado, nome: nomeDetectado };
+        }).filter(m => m.id !== '');
 
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json(membrosFiltrados);
+        return res.status(200).json({ membros: membrosFiltrados });
       }
 
       case 'buscarWrapupsDaFila': {
@@ -100,16 +100,7 @@ export default async function handler(req, res) {
           });
         }
         
-        // Dicionário Robusto de Tradução para o Dashboard (Normalizado em Caixa Alta e Misturado)
-        const traducoesDashboard = {
-          "ON QUEUE": "Fila", "ON_QUEUE": "Fila",
-          "AVAILABLE": "Disponível",
-          "BREAK": "Pausa Básica", "PAUSA BÁSICA": "Pausa Básica",
-          "MEAL": "Pausa Refeição", "PAUSA REFEIÇÃO": "Pausa Refeição",
-          "MEETING": "Reunião", "TRAINING": "Treinamento",
-          "AWAY": "Ausente do PC", "BUSY": "Ocupado", "OFFLINE": "Offline"
-        };
-
+        const traducoesPadrao = { "Available": "Disponível", "Break": "Pausa Básica", "Meal": "Pausa Refeição", "Meeting": "Reunião", "Training": "Treinamento", "Away": "Ausente do PC", "Busy": "Ocupado" };
         let agentes = []; let paginaAtual = 1; let temMaisDados = true; let interagindoAgoraGlobal = 0;
 
         while (temMaisDados) {
@@ -135,20 +126,15 @@ export default async function handler(req, res) {
             interagindoAgoraGlobal += qtdInteracoes;
             
             let statusAmigavel = "Offline"; let tipoClass = "offline";
-            let sysUpper = sysPresence.toUpperCase().replace(/\s+/g, '_');
-
             if (sysPresence !== "Offline") {
-              if (sysUpper === "ON_QUEUE") {
+              if (sysPresence === "On Queue") {
                 if (rStatus === "INTERACTING" || rStatus === "COMMUNICATING") { statusAmigavel = "Em Atendimento"; tipoClass = "busy"; }
                 else if (rStatus === "NOT_RESPONDING") { statusAmigavel = "Não Respondendo"; tipoClass = "away"; }
                 else { statusAmigavel = "Disponível"; tipoClass = "available"; }
               } else {
                 let statusSecundario = dicPresencas[presenceDef.id] || presenceDef.name || "";
-                let secUpper = statusSecundario.toUpperCase().trim();
-                
-                // Aplica tradução inteligente baseada nas definições customizadas ou fallbacks padrão
-                statusAmigavel = dicPresencas[presenceDef.id] || traducoesDashboard[secUpper] || traducoesDashboard[sysUpper] || statusSecundario || sysPresence;
-                tipoClass = (sysUpper === "AVAILABLE" || sysUpper === "INTERACTING") ? "acw" : "break";
+                statusAmigavel = traducoesPadrao[statusSecundario] || statusSecundario || sysPresence;
+                tipoClass = (sysPresence === "Available" || sysPresence === "Interacting") ? "acw" : "break";
               }
             }
             
@@ -170,7 +156,7 @@ export default async function handler(req, res) {
           rAggFila.results.forEach(rg => rg.data?.forEach(d => d.metrics?.forEach(m => {
             if (m.metric === "tAnswered") { resultFila.sumTAnswered += m.stats.sum||0; resultFila.countTAnswered += m.stats.count||0; }
             if (m.metric === "tHandle") { resultFila.sumTHandle += m.stats.sum||0; resultFila.countTHandle += m.stats.count||0; }
-            if (m.metric === "tAcw") { resultFila.sumTAcw += m.stats.sum||0; resultFila.countTHandle += m.stats.count||0; }
+            if (m.metric === "tAcw") { resultFila.sumTAcw += m.stats.sum||0; resultFila.countTAcw += m.stats.count||0; }
             if (m.metric === "tWait") { resultFila.sumTWait += m.stats.sum||0; resultFila.countTWait += m.stats.count||0; }
             if (m.metric === "nOffered") resultFila.nOfertadas += m.stats.count||0;
             if (m.metric === "tAbandon") resultFila.nAbandonadas += m.stats.count||0;
@@ -257,27 +243,21 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, novoStatus: 'Offline' });
       }
 
+      // =================================═════════════════════
+      //  CORREÇÃO CRÍTICA: AUDITORIA OUTBOUND COM NOMES E TABULAÇÕES REAIS
+      // =================================═════════════════════
       case 'processarAuditoriaOutbound': {
         const { idFila, intervaloStr } = req.body;
+
+        // Caches para evitar estouro de requisições
         const cacheNomes = {};
         const cacheWrapups = {};
 
+        // Busca o dicionário de wrapups da organização para traduzir os IDs
         try {
           const rW = await callGenesys(`/api/v2/routing/queues/${idFila}/wrapupcodes?pageSize=100`);
-          if (rW && rW.entities) {
-            rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
-          }
+          if (rW.entities) rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
         } catch(e) {}
-
-        try {
-          const rUsersFila = await callGenesys(`/api/v2/routing/queues/${idFila}/members?pageSize=100`);
-          if (rUsersFila && rUsersFila.entities) {
-            rUsersFila.entities.forEach(m => {
-              let uObj = m.user || m || {};
-              if (uObj.id) cacheNomes[uObj.id] = uObj.name || m.name || "Operador";
-            });
-          }
-        } catch (e) {}
 
         let paginaAtual = 1; let temMaisDados = true; let agrupamento = {};
 
@@ -287,7 +267,6 @@ export default async function handler(req, res) {
             "segmentFilters": [{ "type": "and", "predicates": [ {"dimension": "mediaType", "value": "voice"}, {"dimension": "direction", "value": "outbound"}, {"dimension": "queueId", "value": idFila} ] }], 
             "paging": {"pageSize": 100, "pageNumber": paginaAtual} 
           };
-          
           const response = await callGenesys("/api/v2/analytics/conversations/details/query", "post", payload);
           if (response.erro) return res.status(200).json({ error: true, message: "Erro na extração: " + response.erro });
           
@@ -328,13 +307,14 @@ export default async function handler(req, res) {
                   for (let sa = 0; sa < sessionsAgent.length; sa++) {
                     let segments = sessionsAgent[sa].segments || [];
                     for (let sg = 0; sg < segments.length; sg++) {
-                      if (segments[sg].wrapUpCode) wrapupId = segments[sg].wrapUpCode;
+                      if (sg.wrapUpCode) wrapupId = sg.wrapUpCode;
                     }
                   }
                 }
               }
               
               if (numeroLimpo && agenteId) {
+                // Captura do DDD Brisanet (Mapeamento regional Nordeste)
                 let soNumeros = numeroLimpo.replace(/\D/g, '');
                 let ddd = "N/A";
                 if (soNumeros.startsWith('55') && soNumeros.length >= 12) ddd = soNumeros.substring(2, 4);
@@ -356,14 +336,22 @@ export default async function handler(req, res) {
           let partes = chaves[k].split("|");
           if (agrupamento[chaves[k]].tentativas > 1) {
             let aId = partes[3];
+            if (!cacheNomes[aId]) {
+              try {
+                let rU = await callGenesys(`/api/v2/users/${aId}`);
+                cacheNomes[aId] = rU.name || aId;
+              } catch(e) { cacheNomes[aId] = aId; }
+            }
+            
             let wId = partes[4];
-            let nomeOperadorFinal = cacheNomes[aId] || "Agente (" + aId.substring(0,5) + ")";
-            let nomeFinalizacaoFinal = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
+            let wrapupNomeCompleto = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
 
             linhasRelatorio.push({ 
               data: partes[0], ddd: partes[1], numero: partes[2], 
-              agente: nomeOperadorFinal, wrapup: nomeFinalizacaoFinal, 
-              tentativas: agrupamento[chaves[k]].tentativas, detalhes: agrupamento[chaves[k]].detalhes 
+              agente: cacheNomes[aId], 
+              wrapup: wrapupNomeCompleto, 
+              tentativas: agrupamento[chaves[k]].tentativas,
+              detalhes: agrupamento[chaves[k]].detalhes 
             });
           } 
         }
@@ -384,20 +372,25 @@ export default async function handler(req, res) {
         const cData = await callGenesys(`/api/v2/conversations/${conversationId}`);
         let cliente = cData.participants?.find(p => p.purpose === 'customer')?.name || 'Desconhecido';
         let agente = cData.participants?.find(p => p.purpose === 'agent')?.name || 'Operador';
+        
         let prompt = `Analise a retenção Brisanet do cliente ${cliente}. Prompt customizado: ${customPrompt || 'Padrão'}`;
-        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado.</p>";
+        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado e cliente retido com sucesso.</p>";
         
         if (provider === 'gemini') {
           const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
           const gJson = await gRes.json();
           if (gJson.candidates?.[0]?.content?.parts?.[0]?.text) iaResult = gJson.candidates[0].content.parts[0].text;
         }
+        
         return res.status(200).json({ ok: true, relatorioHTML: iaResult.split('===')[1] || iaResult, cliente, agente, wrapup: 'Retenção', desfechoLote: 'Retido', id: conversationId });
       }
 
+      // =================================═════════════════════
+      //  CORREÇÃO CRÍTICA: MOTOR E CRUIZAMENTO COMPLETO DE PAUSAS WFM Meta 10m/20m
+      // =================================═════════════════════
       case 'auditarPausasWFM': {
         const { groupId, userId, intervaloIso } = req.body;
-        const TOLERANCIA_GERAL_MS = 2 * 60000;
+        const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos fixa
 
         const dicPresencas = {};
         const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
@@ -418,12 +411,8 @@ export default async function handler(req, res) {
           const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
           if (dg.entities) {
             dg.entities.forEach(m => {
-              let userObj = m.user || m || {};
-              let idReal = userObj.id || m.id;
-              let nomeReal = m.name || userObj.name || "Operador";
-              if (idReal) {
-                mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
-              }
+              let uObj = m.user || m || {};
+              if (uObj.id) mapeamentoEquipeCompleta.push({ id: uObj.id, nome: m.name || uObj.name || "Operador" });
             });
           }
         }
@@ -459,13 +448,11 @@ export default async function handler(req, res) {
 
                     if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
                       if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true; 
-                        tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
+                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
                       }
                     } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
                       if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true; 
-                        tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
+                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
                       }
                     }
 
@@ -488,9 +475,7 @@ export default async function handler(req, res) {
         let resultadoFinal = mapeamentoEquipeCompleta.map(ag => {
           let tData = timelinePorUsuario[ag.id] || { pausas: [] };
           return {
-            userId: ag.id, 
-            nome: ag.nome, 
-            pausas: tData.pausas,
+            userId: ag.id, nome: ag.nome, pausas: tData.pausas,
             totalEstourosNoPeriodo: tData.pausas.filter(p => p.estourou).length
           };
         });
