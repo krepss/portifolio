@@ -848,6 +848,7 @@ function toggleDropdown(id, event) {
     if (si) { si.value = ''; filterDropdown(id, ''); si.focus(); }
   }
 }
+  
 
 function selecionarItemDropdown(id, itemId, itemNome) {
   document.getElementById('label-'+id).textContent = itemNome;
@@ -876,24 +877,11 @@ function selecionarItemDropdown(id, itemId, itemNome) {
     
     if (itemId) {
       callApi('buscarMembrosGrupo', { teamId: itemId })
-        .then(function(res) {
-          // Garante a captura do array independentemente do formato da resposta
-          var rawList = res.membros || res || [];
-          
-          // Uniformiza os dados para garantir que contêm as chaves 'id' e 'nome'
-          var listaTratada = rawList.map(function(m) {
-            return {
-              id: m.id || '',
-              nome: m.nome || m.name || 'Operador Desconhecido'
-            };
-          });
-
-          // Concatena com a opção padrão de todos os agentes
-          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(listaTratada);
-          
-          // Alimenta o dropdown wfm-agente
-          popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
-        })
+  .then(function(res) {
+    // Como o backend agora envia o array puro, o 'res' já é a própria lista!
+    var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(res || []);
+    popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
+  }) })
         .catch(function(e) { 
           console.error(e);
           document.getElementById('label-wfm-agente').textContent = 'Erro ao carregar';
