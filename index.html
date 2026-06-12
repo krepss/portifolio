@@ -640,7 +640,8 @@ function callApi(endpoint, body = {}) {
   const token = localStorage.getItem('genesys_token') || '';
   const baseUrl = localStorage.getItem('genesys_url') || 'https://api.sae1.pure.cloud';
   
-  return fetch('/api/' + endpoint, {
+  // Modificado para passar o nome da rota no parâmetro de URL (Query Parameter)
+  return fetch('/api?action=' + endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, baseUrl, ...body })
