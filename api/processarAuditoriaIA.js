@@ -1,4 +1,10 @@
 export default async function handler(req, res) {
+  // Habilita CORS para evitar qualquer bloqueio entre chamadas em lote
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
   const { token, baseUrl, conversationId, provider, model, apiKey, customPrompt } = req.body;
@@ -10,7 +16,7 @@ export default async function handler(req, res) {
   let cleanUrl = (baseUrl || 'https://api.sae1.pure.cloud').trim().replace(/\/$/, '');
   const headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 
-  // Helpers auxiliares locais
+  // Helpers auxiliares locais protegidos
   function extrairNomeClienteSeguro(participante) {
     let nomeEncontrado = participante.name || "";
     if (participante.attributes) {
@@ -37,6 +43,7 @@ export default async function handler(req, res) {
     if (String(wrapupId).startsWith("ININ-")) return wrapupId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "");
     try {
       const response = await fetch(`${cleanUrl}/api/v2/routing/wrapupcodes/${wrapupId}`, { headers });
+      if (!response.ok) return `Código (${wrapupId})`;
       const r = await response.json();
       return r && r.name ? r.name : `Código (${wrapupId})`;
     } catch (e) {
@@ -69,7 +76,6 @@ export default async function handler(req, res) {
            wName = p.wrapup.name || await obterNomeFinalizacao(p.wrapup.code);
         } else {
            let foundWrapup = false;
-           // Corrigido para for...of permitindo await assíncrono correto no Node.js
            for (const media of ['sessions', 'calls', 'chats', 'messages', 'emails']) {
                if (p[media] && Array.isArray(p[media])) {
                    for (const s of p[media]) {
@@ -146,7 +152,7 @@ export default async function handler(req, res) {
     
     let instrucoesDinamicas = (customPrompt && customPrompt.trim() !== "") ? customPrompt.trim() :
       `1. Resumo do Caso: O que o cliente solicitou e qual foi o motivo real do cancelamento/insatisfação alegado?
-2. Tratativa de Retenção: O(s) Operador(es) Humano(s) aplicou(ram) techniques para reter o cliente? Foque a avaliação apenas na postura dos operadores humanos.
+2. Tratativa de Retenção: O(s) Operador(es) Humano(s) aplicou(ram) técnicas para reter o cliente? Foque a avaliação apenas na postura dos operadores humanos.
 3. Tabulação: As tabulações aplicadas refletem corretamente o desfecho da conversa?
 4. Feedback da IA: Apresente sua visão analítica. É um atendimento aprovado, passível de feedback ou crítico?`;
 
@@ -192,13 +198,13 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
        return res.status(200).json({ erro: 'Provedor de IA desconhecido.' });
     }
   
-    // 4. Parser Inteligente do Cabeçalho e HTML
+    // 4. Parser Inteligente e Protegido contra quebras (Elimina erro 500)
     iaResult = iaResult.replace(/```html/g, '').replace(/```/g, '').trim();
     iaResult = iaResult.replace(/\*\*(CLIENTE:|DESFECHO:)\*\*/gi, '$1').replace(/\*(CLIENTE:|DESFECHO:)\*/gi, '$1');
     
     let nomeClienteFinal = cliente;
     let htmlFinal = iaResult;
-    let statusLote = "Analisado";
+    let statusLote = "Outro";
 
     if (iaResult.includes('===')) {
       let idxSep = iaResult.indexOf('===');
@@ -206,30 +212,28 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
       htmlFinal = iaResult.substring(idxSep + 3).trim();
       
       cabecalho.split('\n').forEach(function(linha) {
-        let lUpper = ServerLineUpper(linha);
-        if (lUpper.startsWith('CLIENTE:')) {
+        let lUpper = linha.trim().toUpperCase();
+        if (lUpper.startsWith('CLIENTE:') && linha.includes(':')) {
           let extraido = linha.substring(linha.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '').replace(/\*+/g, '').trim();
           if (extraido && !['não identificado','desconhecido','cliente','n/a'].includes(extraido.toLowerCase())) nomeClienteFinal = extraido;
         }
-        if (lUpper.startsWith('DESFECHO:')) {
+        if (lUpper.startsWith('DESFECHO:') && linha.includes(':')) {
           let desfechoRaw = linha.substring(linha.indexOf(':') + 1).trim().replace(/\*+/g, '').replace(/[()\[\]]/g, '').trim().toUpperCase();
           if (desfechoRaw.includes('RETID')) statusLote = 'Retido';
           else if (desfechoRaw.includes('CANCEL')) statusLote = 'Cancelado';
-          else statusLote = 'Outro';
         }
       });
     } else {
       let htmlLinhas = [];
       iaResult.split('\n').forEach(function(linha) {
-        let lUpper = ServerLineUpper(linha);
-        if (lUpper.startsWith('CLIENTE:')) {
+        let lUpper = linha.trim().toUpperCase();
+        if (lUpper.startsWith('CLIENTE:') && linha.includes(':')) {
           let extraido = linha.substring(linha.indexOf(':') + 1).trim().replace(/\*+/g, '').trim();
           if (extraido && !['não identificado','desconhecido','cliente','n/a'].includes(extraido.toLowerCase())) nomeClienteFinal = extraido;
-        } else if (lUpper.startsWith('DESFECHO:')) {
+        } else if (lUpper.startsWith('DESFECHO:') && linha.includes(':')) {
           let d = linha.substring(linha.indexOf(':') + 1).trim().replace(/\*+/g, '').toUpperCase();
           if (d.includes('RETID')) statusLote = 'Retido';
           else if (d.includes('CANCEL')) statusLote = 'Cancelado';
-          else statusLote = 'Outro';
         } else {
           htmlLinhas.push(linha);
         }
@@ -237,12 +241,9 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
       htmlFinal = htmlLinhas.join('\n').trim();
     }
 
-    function ServerLineUpper(str) {
-      return String(str || '').trim().toUpperCase();
-    }
-
-    if (statusLote === 'Analisado' || statusLote === 'Outro') {
-      let txtSemTags = htmlFinal.replace(/<[^>]+>/g, ' ').toLowerCase();
+    // Fallback inteligente caso a IA mude a formatação da palavra chave
+    let txtSemTags = htmlFinal.replace(/<[^>]+>/g, ' ').toLowerCase();
+    if (statusLote === 'Outro') {
       if (txtSemTags.includes('retid') || txtSemTags.includes('retenção confirmada')) statusLote = 'Retido';
       else if (txtSemTags.includes('cancelad') || txtSemTags.includes('cancelamento efetivad')) statusLote = 'Cancelado';
     }
@@ -250,6 +251,7 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
     return res.status(200).json({ ok: true, relatorioHTML: htmlFinal, cliente: nomeClienteFinal, agente: agente, wrapup: wrapup, desfechoLote: statusLote, id: conversationId });
 
   } catch (e) {
-    return res.status(200).json({ erro: 'Falha crítica na conexão IA: ' + e.message });
+    // Qualquer erro agora é retornado como JSON seguro em vez de estourar erro 500 no servidor
+    return res.status(200).json({ ok: false, erro: 'Erro interno no processamento: ' + e.message });
   }
 }
