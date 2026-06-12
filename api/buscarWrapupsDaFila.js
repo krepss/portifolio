@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // Habilita CORS para o frontend conseguir ler sem bloqueios
+  // Configuração de Headers para evitar qualquer bloqueio de requisição
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -12,12 +12,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ erro: 'Método não permitido' });
   }
 
-  // Captura tanto se vier minúsculo (padrão Node) quanto se vier do padrão antigo (ex: idFila)
   const { token, baseUrl, queueId, idFila } = req.body;
   const targetQueueId = queueId || idFila;
 
-  if (!token) return res.status(200).json({ erro: 'Token ausente.' });
-  if (!targetQueueId) return res.status(200).json([]);
+  if (!token || !targetQueueId) {
+    return res.status(200).json([]);
+  }
 
   let cleanUrl = (baseUrl || 'https://api.sae1.pure.cloud').trim().replace(/\/$/, '');
 
@@ -32,23 +32,25 @@ export default async function handler(req, res) {
 
     const data = await response.json();
     
-    if (!response.ok || !data.entities) {
-      // Se a fila não tiver wrapups associados diretamente, retorna lista vazia em vez de travar
+    // Se o Genesys retornar algum erro ou não encontrar a propriedade entities, devolvemos um array vazio seguro []
+    if (!response.ok || !data || !data.entities || !Array.isArray(data.entities)) {
       return res.status(200).json([]);
     }
 
-    // Mapeia garantindo o formato de Objeto que o frontend usa para montar as <option>
+    // Mapeia os dados exatamente como a função popularDropdown espera receber
     const wrapups = data.entities.map(w => ({
       id: w.id,
-      nome: w.name || w.id
+      nome: w.name || 'Sem nome'
     }));
 
-    // Ordena alfabeticamente para ficar bonito no select
+    // Ordena alfabeticamente por nome para facilitar a busca do usuário
     wrapups.sort((a, b) => a.nome.localeCompare(b.nome));
 
+    // RETORNO CRÍTICO: Devolve apenas a lista pura (Array), eliminando chaves extras
     return res.status(200).json(wrapups);
 
   } catch (e) {
+    console.error('Erro interno na rota de wrapups:', e);
     return res.status(200).json([]);
   }
 }
