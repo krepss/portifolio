@@ -882,17 +882,22 @@ function selecionarItemDropdown(id, itemId, itemNome) {
   }
   if (id === 'wfm-grupo') {
     S.wfmGrupoId = itemId || null;
-    if (S.wfmFilaId) {
-      document.getElementById('label-wfm-agente').textContent = 'Filtrando equipe...';
-      callApi('carregarDadosDashboard', { queueId: S.wfmFilaId, groupId: itemId || null, intervaloIso: obterIntervaloFormatado('wfm'), ehHoje: false })
+    S.wfmAgenteId = null;
+    document.getElementById('label-wfm-agente').textContent = 'Buscando operadores...';
+    
+    if (itemId) {
+      callApi('buscarMembrosGrupo', { teamId: itemId })
         .then(function(res) {
-           var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat((res.agentes || []).map(a => ({ id: a.id, nome: a.nome })));
-           popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
-           S.wfmAgenteId = null;
-        });
+          // res deve retornar um array de objetos [{id, nome}] vindo da nossa nova rota
+          var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(res || []);
+          popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
+        })
+        .catch(function(e) { showToast('Erro ao carregar agentes da equipe'); });
+    } else {
+      popularDropdown('wfm-agente', [{id:'', nome:'— Todos os Agentes —'}], '— Todos os Agentes —');
     }
   }
-  if (id === 'wfm-agente')   { S.wfmAgenteId = itemId || null; }
+  if (id === 'wfm-agente') { S.wfmAgenteId = itemId || null; }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1510,21 +1515,18 @@ function dlCSV(rows, nome) {
 //  AUDITORIA DE PAUSAS WFM
 // ══════════════════════════════════════════════════════════════
 function acionarAuditoriaPausas() {
-  if (!S.wfmFilaId) return showToast('Selecione uma fila para auditar as pausas.');
+  if (!S.wfmGrupoId) return showToast('Selecione uma equipe de trabalho para auditar.');
   var intervalo = obterIntervaloFormatado('wfm');
   if (!intervalo) return showToast('Configure o período de análise corretamente.');
-  var tolerancia = document.getElementById('wfm-tolerancia').value || 15;
 
   document.getElementById('wfm-vazio').style.display    = 'none';
   document.getElementById('wfm-conteudo').style.display = 'none';
   document.getElementById('wfm-loading').style.display  = 'flex';
 
   callApi('auditarPausasWFM', { 
-    queueId: S.wfmFilaId, 
     groupId: S.wfmGrupoId, 
     userId: S.wfmAgenteId, 
-    intervaloIso: intervalo, 
-    toleranciaMinutos: parseInt(tolerancia) 
+    intervaloIso: intervalo
   })
   .then(function(r) {
     document.getElementById('wfm-loading').style.display = 'none';
