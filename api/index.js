@@ -518,7 +518,7 @@ export default async function handler(req, res) {
       case 'buscarAgentesPorPausa': {
         const { groupId: bpGroupId, intervaloIso: bpIntervalo } = req.body;
 
-        // 1. Buscar definições de presença para mapear nomes
+        // 1. Buscar definições de presença (igual ao auditarPausasWFM)
         const dicPresencasBP = {};
         const resPres2 = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres2.entities) {
@@ -528,11 +528,11 @@ export default async function handler(req, res) {
               if (p.languageLabels["pt-BR"]) pName = p.languageLabels["pt-BR"];
               else if (p.languageLabels["pt_BR"]) pName = p.languageLabels["pt_BR"];
             }
-            dicPresencasBP[p.id] = { nome: pName, sys: p.systemPresence };
+            dicPresencasBP[p.id] = pName;
           });
         }
 
-        // 2. Buscar membros da equipe
+        // 2. Buscar membros da equipe — lógica idêntica ao auditarPausasWFM
         let membros = [];
         if (bpGroupId) {
           const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100`);
@@ -547,30 +547,37 @@ export default async function handler(req, res) {
         }
         if (membros.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {} });
 
-        // 3. Buscar timeline de presença de todos os membros
+        // 3. Buscar timeline de presença — payload idêntico ao auditarPausasWFM
         const payloadBP = {
-          interval: bpIntervalo,
-          userFilters: [{ type: 'or', predicates: membros.map(m => ({ dimension: 'userId', value: m.id })) }]
+          "interval": bpIntervalo,
+          "userFilters": [{ "type": "or", "predicates": membros.map(m => ({ "dimension": "userId", "value": m.id })) }]
         };
         const bpQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadBP);
 
-        // 4. Construir mapa: pausaNome -> [{ userId, nome, inicio, fim, duracaoMin }]
-        const pausaMap = {}; // { pausaNome: [entradas...] }
+        // 4. Construir nomeMap a partir dos membros
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        const EXCLUIDOS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
+        // 5. Processar userDetails — lógica idêntica ao auditarPausasWFM, mas agrupando por pausa
+        const pausaMap = {}; // { pausaNome: [ entradas brutas ] }
+        const EXCLUIDOS_SYS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
 
         if (!bpQuery.erro && bpQuery.userDetails) {
           bpQuery.userDetails.forEach(u => {
+            // Tenta pegar o nome do nomeMap; fallback para nome que o Genesys pode trazer
             const nomeAgente = nomeMap[u.userId] || u.userId;
+
             (u.primaryPresence || []).forEach(pres => {
-              if (EXCLUIDOS.has(pres.systemPresence)) return;
-              let pDefInfo = dicPresencasBP[pres.presenceDefinitionId] || {};
-              let nomeStatus = pDefInfo.nome || pres.systemPresence;
+              if (EXCLUIDOS_SYS.has(pres.systemPresence)) return;
+
+              // Resolve nome do status — igual ao auditarPausasWFM
+              let pDefId = pres.presenceDefinitionId;
+              const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
+              let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
+
               const inicio = new Date(pres.startTime);
               const fim = pres.endTime ? new Date(pres.endTime) : new Date();
-              const duracaoMs = fim - inicio;
+              const duracaoMs = fim.getTime() - inicio.getTime();
               if (duracaoMs <= 0) return;
               const duracaoMin = Math.floor(duracaoMs / 60000);
 
@@ -580,20 +587,20 @@ export default async function handler(req, res) {
                 nome: nomeAgente,
                 inicio: inicio.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
                 fim: pres.endTime ? fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : 'Em andamento',
-                duracaoMin,
-                sysPresence: pres.systemPresence
+                duracaoMin
               });
             });
           });
         }
 
-        // 5. Consolidar: por agente dentro de cada pausa (somar tempo total)
+        // 6. Consolidar por agente dentro de cada pausa
         const resultado = {};
         Object.keys(pausaMap).forEach(pausaNome => {
-          const entradas = pausaMap[pausaNome];
           const porAgente = {};
-          entradas.forEach(e => {
-            if (!porAgente[e.userId]) porAgente[e.userId] = { userId: e.userId, nome: e.nome, ocorrencias: 0, totalMin: 0, registros: [] };
+          pausaMap[pausaNome].forEach(e => {
+            if (!porAgente[e.userId]) {
+              porAgente[e.userId] = { userId: e.userId, nome: e.nome, ocorrencias: 0, totalMin: 0, registros: [] };
+            }
             porAgente[e.userId].ocorrencias++;
             porAgente[e.userId].totalMin += e.duracaoMin;
             porAgente[e.userId].registros.push({ inicio: e.inicio, fim: e.fim, duracaoMin: e.duracaoMin });
@@ -601,7 +608,8 @@ export default async function handler(req, res) {
           resultado[pausaNome] = Object.values(porAgente).sort((a, b) => b.totalMin - a.totalMin);
         });
 
-        return res.status(200).json({ ok: true, pausas: Object.keys(resultado).sort(), agentesMap: resultado });
+        const pausasOrdenadas = Object.keys(resultado).sort();
+        return res.status(200).json({ ok: true, pausas: pausasOrdenadas, agentesMap: resultado });
       }
 
       default:
