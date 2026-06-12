@@ -83,7 +83,7 @@ export default async function handler(req, res) {
 
         // Ordena de A-Z pelo nome dos agentes
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json(membrosFiltrados);
+        return res.status(200).json({ membros: membrosFiltrados });
       }
       case 'carregarDadosDashboard': {
         const { queueId, groupId, intervaloIso, ehHoje } = req.body;
