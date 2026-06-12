@@ -662,7 +662,7 @@ window.addEventListener('load', function() {
   var hojeStr = hoje.getFullYear()+'-'+pad(hoje.getMonth()+1)+'-'+pad(hoje.getDate());
   var mesStr  = hojeStr.substring(0,7);
 
-  ['dash','aud','lote','wfm'].forEach(function(p) {
+  ['dash','aud','lote'].forEach(function(p) {
     var du = document.getElementById(p+'-data-unica'); if(du) du.value = hojeStr;
     var di = document.getElementById(p+'-data-ini');   if(di) di.value = hojeStr;
     var df = document.getElementById(p+'-data-fim');   if(df) df.value = hojeStr;
@@ -778,7 +778,6 @@ function iniciarApp() {
       popularDropdown('dash-fila',  lista, '— Selecione a Fila —');
       popularDropdown('aud-fila',   lista, '— Selecione a Fila —');
       popularDropdown('lote-fila',  lista, '— Escolha a Fila —');
-      popularDropdown('wfm-fila',   lista, '— Escolha a Fila —');
     })
     .catch(function(e){ showToast('Erro ao carregar filas: '+e.message); });
 
@@ -870,17 +869,6 @@ function selecionarItemDropdown(id, itemId, itemNome) {
   }
   if (id === 'lote-wrapup') { S.loteWrapupId = itemId; }
   
-  if (id === 'wfm-fila')    { 
-    S.wfmFilaId = itemId; 
-    document.getElementById('label-wfm-agente').textContent = 'Sincronizando agentes...';
-    callApi('carregarDadosDashboard', { queueId: itemId, intervaloIso: obterIntervaloFormatado('wfm'), ehHoje: false })
-      .then(function(res) {
-         S.wfmListaCompletaAgentes = res.agentes || [];
-         var listaAg = [{id:'', nome:'— Todos os Agentes —'}].concat(S.wfmListaCompletaAgentes.map(a => ({ id: a.id, nome: a.nome })));
-         popularDropdown('wfm-agente', listaAg, '— Todos os Agentes —');
-         S.wfmAgenteId = null;
-      });
-  }
   if (id === 'wfm-grupo') {
     S.wfmGrupoId = itemId || null;
     S.wfmAgenteId = null;
