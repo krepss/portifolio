@@ -450,11 +450,16 @@ export default async function handler(req, res) {
             if (!rSingle.erro) mapeamentoEquipeCompleta.push({ id: rSingle.id, nome: rSingle.name });
           } catch {}
         } else {
+          // Busca todos os integrantes do time enviado
           const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
           if (dg.entities) {
             dg.entities.forEach(m => {
-              let uObj = m.user || m || {};
-              if (uObj.id) mapeamentoEquipeCompleta.push({ id: uObj.id, nome: m.name || uObj.name || "Operador" });
+              let userObj = m.user || m || {};
+              let idReal = userObj.id || m.id;
+              let nomeReal = m.name || userObj.name || "Operador";
+              if (idReal) {
+                mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
+              }
             });
           }
         }
