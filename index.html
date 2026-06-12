@@ -1529,9 +1529,10 @@ function acionarAuditoriaPausas() {
   document.getElementById('wfm-conteudo').style.display = 'none';
   document.getElementById('wfm-loading').style.display  = 'flex';
 
+  // Força o envio do groupId. O userId vai nulo ou vazio para auditar a equipe inteira
   callApi('auditarPausasWFM', { 
     groupId: S.wfmGrupoId, 
-    userId: S.wfmAgenteId, 
+    userId: null, 
     intervaloIso: intervalo
   })
   .then(function(r) {
