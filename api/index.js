@@ -100,7 +100,16 @@ export default async function handler(req, res) {
           });
         }
         
-        const traducoesPadrao = { "Available": "Disponível", "Break": "Pausa Básica", "Meal": "Pausa Refeição", "Meeting": "Reunião", "Training": "Treinamento", "Away": "Ausente do PC", "Busy": "Ocupado" };
+        // Dicionário Robusto de Tradução para o Dashboard (Normalizado em Caixa Alta e Misturado)
+        const traducoesDashboard = {
+          "ON QUEUE": "Fila", "ON_QUEUE": "Fila",
+          "AVAILABLE": "Disponível",
+          "BREAK": "Pausa Básica", "PAUSA BÁSICA": "Pausa Básica",
+          "MEAL": "Pausa Refeição", "PAUSA REFEIÇÃO": "Pausa Refeição",
+          "MEETING": "Reunião", "TRAINING": "Treinamento",
+          "AWAY": "Ausente do PC", "BUSY": "Ocupado", "OFFLINE": "Offline"
+        };
+
         let agentes = []; let paginaAtual = 1; let temMaisDados = true; let interagindoAgoraGlobal = 0;
 
         while (temMaisDados) {
@@ -126,15 +135,20 @@ export default async function handler(req, res) {
             interagindoAgoraGlobal += qtdInteracoes;
             
             let statusAmigavel = "Offline"; let tipoClass = "offline";
+            let sysUpper = sysPresence.toUpperCase().replace(/\s+/g, '_');
+
             if (sysPresence !== "Offline") {
-              if (sysPresence === "On Queue") {
+              if (sysUpper === "ON_QUEUE") {
                 if (rStatus === "INTERACTING" || rStatus === "COMMUNICATING") { statusAmigavel = "Em Atendimento"; tipoClass = "busy"; }
                 else if (rStatus === "NOT_RESPONDING") { statusAmigavel = "Não Respondendo"; tipoClass = "away"; }
                 else { statusAmigavel = "Disponível"; tipoClass = "available"; }
               } else {
                 let statusSecundario = dicPresencas[presenceDef.id] || presenceDef.name || "";
-                statusAmigavel = traducoesPadrao[statusSecundario] || statusSecundario || sysPresence;
-                tipoClass = (sysPresence === "Available" || sysPresence === "Interacting") ? "acw" : "break";
+                let secUpper = statusSecundario.toUpperCase().trim();
+                
+                // Aplica tradução inteligente baseada nas definições customizadas ou fallbacks padrão
+                statusAmigavel = dicPresencas[presenceDef.id] || traducoesDashboard[secUpper] || traducoesDashboard[sysUpper] || statusSecundario || sysPresence;
+                tipoClass = (sysUpper === "AVAILABLE" || sysUpper === "INTERACTING") ? "acw" : "break";
               }
             }
             
@@ -156,7 +170,7 @@ export default async function handler(req, res) {
           rAggFila.results.forEach(rg => rg.data?.forEach(d => d.metrics?.forEach(m => {
             if (m.metric === "tAnswered") { resultFila.sumTAnswered += m.stats.sum||0; resultFila.countTAnswered += m.stats.count||0; }
             if (m.metric === "tHandle") { resultFila.sumTHandle += m.stats.sum||0; resultFila.countTHandle += m.stats.count||0; }
-            if (m.metric === "tAcw") { resultFila.sumTAcw += m.stats.sum||0; resultFila.countTAcw += m.stats.count||0; }
+            if (m.metric === "tAcw") { resultFila.sumTAcw += m.stats.sum||0; resultFila.countTHandle += m.stats.count||0; }
             if (m.metric === "tWait") { resultFila.sumTWait += m.stats.sum||0; resultFila.countTWait += m.stats.count||0; }
             if (m.metric === "nOffered") resultFila.nOfertadas += m.stats.count||0;
             if (m.metric === "tAbandon") resultFila.nAbandonadas += m.stats.count||0;
