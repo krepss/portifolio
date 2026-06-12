@@ -249,24 +249,53 @@ export default async function handler(req, res) {
       case 'processarAuditoriaOutbound': {
         const { idFila, intervaloStr } = req.body;
 
-        // Caches para evitar estouro de requisições
+        // Caches locais para otimizar performance e garantir a tradução dos IDs
         const cacheNomes = {};
         const cacheWrapups = {};
 
-        // Busca o dicionário de wrapups da organização para traduzir os IDs
+        // 1. MAPEAMENTO E CACHE DOS WRAP-UPS (FINALIZAÇÕES) DA FILA
         try {
+          // Busca todas as tabulações vinculadas à fila do Genesys Cloud
           const rW = await callGenesys(`/api/v2/routing/queues/${idFila}/wrapupcodes?pageSize=100`);
-          if (rW.entities) rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
-        } catch(e) {}
+          if (rW && rW.entities) {
+            rW.entities.forEach(w => { 
+              cacheWrapups[w.id] = w.name; 
+            });
+          }
+        } catch(e) { 
+          console.error("Falha ao carregar cache de tabulações:", e); 
+        }
+
+        // 2. MAPEAMENTO E CACHE DE NOMES DOS AGENTES DA FILA
+        try {
+          const rUsersFila = await callGenesys(`/api/v2/routing/queues/${idFila}/members?pageSize=100`);
+          if (rUsersFila && rUsersFila.entities) {
+            rUsersFila.entities.forEach(m => {
+              let uObj = m.user || m || {};
+              if (uObj.id) cacheNomes[uObj.id] = uObj.name || m.name || "Operador";
+            });
+          }
+        } catch (e) { 
+          console.error("Falha ao carregar cache de nomes:", e); 
+        }
 
         let paginaAtual = 1; let temMaisDados = true; let agrupamento = {};
 
+        // 3. EXTRAÇÃO CRÍTICA DAS CONVERSAS DO ANALYTICS
         while (temMaisDados) {
           const payload = { 
             "interval": intervaloStr, 
-            "segmentFilters": [{ "type": "and", "predicates": [ {"dimension": "mediaType", "value": "voice"}, {"dimension": "direction", "value": "outbound"}, {"dimension": "queueId", "value": idFila} ] }], 
+            "segmentFilters": [{ 
+              "type": "and", 
+              "predicates": [ 
+                {"dimension": "mediaType", "value": "voice"}, 
+                {"dimension": "direction", "value": "outbound"}, 
+                {"dimension": "queueId", "value": idFila} 
+              ] 
+            }], 
             "paging": {"pageSize": 100, "pageNumber": paginaAtual} 
           };
+          
           const response = await callGenesys("/api/v2/analytics/conversations/details/query", "post", payload);
           if (response.erro) return res.status(200).json({ error: true, message: "Erro na extração: " + response.erro });
           
@@ -307,20 +336,20 @@ export default async function handler(req, res) {
                   for (let sa = 0; sa < sessionsAgent.length; sa++) {
                     let segments = sessionsAgent[sa].segments || [];
                     for (let sg = 0; sg < segments.length; sg++) {
-                      if (sg.wrapUpCode) wrapupId = sg.wrapUpCode;
+                      if (segments[sg].wrapUpCode) wrapupId = segments[sg].wrapUpCode;
                     }
                   }
                 }
               }
               
               if (numeroLimpo && agenteId) {
-                // Captura do DDD Brisanet (Mapeamento regional Nordeste)
                 let soNumeros = numeroLimpo.replace(/\D/g, '');
                 let ddd = "N/A";
                 if (soNumeros.startsWith('55') && soNumeros.length >= 12) ddd = soNumeros.substring(2, 4);
                 else if (soNumeros.startsWith('0') && soNumeros.length >= 11) ddd = soNumeros.substring(1, 3);
                 else if (soNumeros.length >= 10) ddd = soNumeros.substring(0, 2);
 
+                // Armazena no agrupamento incluindo o wrapupId na chave única
                 let chave = `${dataFormatada}|${ddd}|${numeroLimpo}|${agenteId}|${wrapupId || 'Sem'}`;
                 if (!agrupamento[chave]) agrupamento[chave] = { tentativas: 0, detalhes: [] }; 
                 agrupamento[chave].tentativas++; 
@@ -331,30 +360,34 @@ export default async function handler(req, res) {
           }
         }
         
+        // 4. MONTAGEM DO RELATÓRIO COM TRADUÇÃO DOS CACHES
         let linhasRelatorio = []; let chaves = Object.keys(agrupamento);
         for (let k = 0; k < chaves.length; k++) { 
           let partes = chaves[k].split("|");
+          
+          // Regra original: Só joga para o relatório se for caso de insistência (mais de 1 tentativa)
           if (agrupamento[chaves[k]].tentativas > 1) {
             let aId = partes[3];
-            if (!cacheNomes[aId]) {
-              try {
-                let rU = await callGenesys(`/api/v2/users/${aId}`);
-                cacheNomes[aId] = rU.name || aId;
-              } catch(e) { cacheNomes[aId] = aId; }
-            }
-            
             let wId = partes[4];
-            let wrapupNomeCompleto = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
+            
+            // Traduz o ID do agente usando o cache pré-carregado
+            let nomeOperadorFinal = cacheNomes[aId] || "Agente (" + aId.substring(0,5) + ")";
+            
+            // Traduz o ID da finalização usando o cache pré-carregado WFM
+            let nomeFinalizacaoFinal = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
 
             linhasRelatorio.push({ 
-              data: partes[0], ddd: partes[1], numero: partes[2], 
-              agente: cacheNomes[aId], 
-              wrapup: wrapupNomeCompleto, 
+              data: partes[0], 
+              ddd: partes[1], 
+              numero: partes[2], 
+              agente: nomeOperadorFinal, 
+              wrapup: nomeFinalizacaoFinal, 
               tentativas: agrupamento[chaves[k]].tentativas,
               detalhes: agrupamento[chaves[k]].detalhes 
             });
           } 
         }
+        
         linhasRelatorio.sort((a, b) => b.tentativas - a.tentativas);
         return res.status(200).json({ error: false, data: linhasRelatorio });
       }
