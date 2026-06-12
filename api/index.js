@@ -65,13 +65,26 @@ export default async function handler(req, res) {
 
       case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100&expand=user`);
+        // Removido o expand=user que às vezes limita o retorno e forçada a paginação limpa
+        const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
         if (data.erro || !data.entities) return res.status(200).json([]);
-        const membros = data.entities.map(m => ({ id: m.id, nome: m.name || (m.user ? m.user.name : 'Operador') }));
-        membros.sort((a,b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json(membros);
-      }
+        
+        const membros = data.entities.map(m => {
+          // O Genesys pode devolver o nome na raiz do membro (m.name) ou dentro do objeto interno do usuário (m.user.name)
+          let nomeDetectado = m.name || (m.user && m.user.name) || 'Operador Desconhecido';
+          return {
+            id: m.id || (m.user && m.user.id),
+            nome: nomeDetectado
+          };
+        });
+        
+        // Remove duplicados ou IDs inválidos por segurança
+        const membrosFiltrados = membros.filter(m => m.id && m.nome !== 'Operador Desconhecido');
 
+        // Ordena de A-Z pelo nome dos agentes
+        membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
+        return res.status(200).json(membrosFiltrados);
+      }
       case 'carregarDadosDashboard': {
         const { queueId, groupId, intervaloIso, ehHoje } = req.body;
         let membrosGrupo = null;
