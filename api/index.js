@@ -63,18 +63,28 @@ export default async function handler(req, res) {
 
       case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
+        const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100&expand=entities`);
         if (data.erro || !data.entities) return res.status(200).json([]);
-        
-        const membrosFiltrados = data.entities.map(m => {
-          let userObj = m.user || m || {};
-          let idReal = userObj.id || m.id || '';
-          let nomeReal = m.name || userObj.name || 'Operador';
-          return { id: idReal, nome: nomeReal };
-        }).filter(m => m.id !== '' && m.nome !== 'Operador');
 
-        membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        return res.status(200).json(membrosFiltrados);
+        // Extrai IDs — a entidade pode vir como { id } raiz ou { user: { id } }
+        let idsRaw = data.entities.map(m => {
+          let userObj = m.user || m || {};
+          return userObj.id || m.id || '';
+        }).filter(id => id !== '');
+
+        if (idsRaw.length === 0) return res.status(200).json([]);
+
+        // Busca nomes em lote via /api/v2/users?id[]=...
+        const idsQuery = idsRaw.map(id => `id=${encodeURIComponent(id)}`).join('&');
+        const rUsers = await callGenesys(`/api/v2/users?pageSize=100&${idsQuery}`);
+        const nomeMap = {};
+        if (rUsers.entities) {
+          rUsers.entities.forEach(u => { if (u.id) nomeMap[u.id] = u.name || u.id; });
+        }
+
+        const membros = idsRaw.map(id => ({ id, nome: nomeMap[id] || id }));
+        membros.sort((a, b) => a.nome.localeCompare(b.nome));
+        return res.status(200).json(membros);
       }
 
       case 'buscarWrapupsDaFila': {
@@ -89,7 +99,7 @@ export default async function handler(req, res) {
         let membrosGrupo = null;
         if (groupId) {
           const resGrupo = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
-          if (resGrupo.entities) membrosGrupo = resGrupo.entities.map(m => m.id || (m.user && m.user.id));
+          if (resGrupo.entities) membrosGrupo = resGrupo.entities.map(m => (m.user && m.user.id) || m.id).filter(Boolean);
         }
         
         const dicPresencas = {};
@@ -129,7 +139,9 @@ export default async function handler(req, res) {
             
             let rStatus = (member.routingStatus || uObj.routingStatus || {}).status || "UNKNOWN";
             let presenceDef = (member.presence || uObj.presence || {}).presenceDefinition || {};
-            let sysPresence = presenceDef.systemPresence || "Offline";
+            let sysPresenceRaw = presenceDef.systemPresence || "Offline";
+            // Normaliza para comparação robusta independente de case/separador
+            let sysPresenceUp = sysPresenceRaw.toUpperCase().replace(/[_\s]/g, '');
             let modifiedDate = (member.presence || uObj.presence || {}).modifiedDate || new Date().toISOString();
             
             let qtdInteracoes = 0;
@@ -141,23 +153,20 @@ export default async function handler(req, res) {
             interagindoAgoraGlobal += qtdInteracoes;
             
             let statusAmigavel = "Offline"; let tipoClass = "offline";
-            if (sysPresence !== "Offline") {
-              if (sysPresence === "On Queue" || sysPresence === "OnQueue") {
+            if (sysPresenceUp !== "OFFLINE") {
+              if (sysPresenceUp === "ONQUEUE") {
                 if (rStatus === "INTERACTING" || rStatus === "COMMUNICATING") { statusAmigavel = "Em Atendimento"; tipoClass = "busy"; }
                 else if (rStatus === "NOT_RESPONDING") { statusAmigavel = "Não Respondendo"; tipoClass = "away"; }
                 else { statusAmigavel = "Disponível"; tipoClass = "available"; }
               } else {
                 let statusSecundario = dicPresencas[presenceDef.id] || presenceDef.name || "";
-                
-                // RESTAURAÇÃO DA PRIORIDADE ORIGINAL: Traduz o status secundário se ele existir
                 if (statusSecundario) {
                   statusAmigavel = traducoesPadrao[statusSecundario] || traducoesPadrao[statusSecundario.toUpperCase()] || statusSecundario;
                 } else {
-                  statusAmigavel = traducoesPadrao[sysPresence] || traducoesPadrao[sysPresence.toUpperCase()] || sysPresence;
+                  statusAmigavel = traducoesPadrao[sysPresenceRaw] || traducoesPadrao[sysPresenceUp] || sysPresenceRaw;
                 }
-
-                if (sysPresence === "Available" || sysPresence === "Interacting") {
-                   if (sysPresence === "Interacting") statusAmigavel = "Fora da Fila / Pessoal";
+                if (sysPresenceUp === "AVAILABLE" || sysPresenceUp === "INTERACTING") {
+                   if (sysPresenceUp === "INTERACTING") statusAmigavel = "Fora da Fila / Pessoal";
                    tipoClass = "acw";
                 } else { tipoClass = "break"; }
               }
@@ -225,7 +234,7 @@ export default async function handler(req, res) {
         let membrosGrupo = null;
         if (groupId) {
           const rg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
-          if (rg.entities) membrosGrupo = rg.entities.map(m => m.id);
+          if (rg.entities) membrosGrupo = rg.entities.map(m => (m.user && m.user.id) || m.id).filter(Boolean);
         }
         let agentes = [];
         const rUsers = await callGenesys(`/api/v2/routing/queues/${queueId}/members?expand=presence&expand=routingStatus&expand=conversationSummary&pageSize=100`);
@@ -234,12 +243,20 @@ export default async function handler(req, res) {
             let uObj = member.user || member; let userId = uObj.id || member.id;
             if (membrosGrupo && membrosGrupo.indexOf(userId) === -1) return;
             let rStatus = (member.routingStatus || uObj.routingStatus || {}).status || "UNKNOWN";
-            let sysPresence = (member.presence || uObj.presence || {}).presenceDefinition?.systemPresence || "Offline";
+            let sysPresenceRawF = ((member.presence || uObj.presence || {}).presenceDefinition || {}).systemPresence || "Offline";
+            let sysPresenceUpF = sysPresenceRawF.toUpperCase().replace(/[_\s]/g, '');
             let modifiedDate = (member.presence || uObj.presence || {}).modifiedDate || new Date().toISOString();
             let qtd = 0;
             if (member.conversationSummary?.call?.contactCenter) qtd = member.conversationSummary.call.contactCenter.active || 0;
-            let cls = sysPresence === 'On Queue' ? (['INTERACTING','COMMUNICATING'].includes(rStatus) ? 'busy' : 'available') : 'break';
-            agentes.push({ id: userId, status: sysPresence, sysClass: cls, pausaMs: Date.now() - new Date(modifiedDate).getTime(), interagindo: qtd });
+            let cls = 'offline';
+            if (sysPresenceUpF !== 'OFFLINE') {
+              if (sysPresenceUpF === 'ONQUEUE') {
+                cls = ['INTERACTING','COMMUNICATING'].includes(rStatus) ? 'busy' : 'available';
+              } else {
+                cls = 'break';
+              }
+            }
+            agentes.push({ id: userId, status: sysPresenceRawF, sysClass: cls, pausaMs: Date.now() - new Date(modifiedDate).getTime(), interagindo: qtd });
           });
         }
         return res.status(200).json({ agentesStatus: agentes, filaEspera: 0, ativasAgora: 0, timestamp: new Date().toLocaleTimeString('pt-BR') });
@@ -433,14 +450,14 @@ export default async function handler(req, res) {
         } else {
           const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
           if (dg.entities) {
-            dg.entities.forEach(m => {
-              let userObj = m.user || m || {};
-              let idReal = userObj.id || m.id;
-              let nomeReal = m.name || userObj.name || "Operador";
-              if (idReal) {
-                mapeamentoEquipeCompleta.push({ id: idReal, nome: nomeReal });
-              }
-            });
+            const idsWfm = dg.entities.map(m => (m.user && m.user.id) || m.id).filter(Boolean);
+            if (idsWfm.length > 0) {
+              const idsQWfm = idsWfm.map(id => `id=${encodeURIComponent(id)}`).join('&');
+              const rNamesWfm = await callGenesys(`/api/v2/users?pageSize=100&${idsQWfm}`);
+              const nomeMapWfm = {};
+              if (rNamesWfm.entities) rNamesWfm.entities.forEach(u => { if (u.id) nomeMapWfm[u.id] = u.name || u.id; });
+              idsWfm.forEach(id => mapeamentoEquipeCompleta.push({ id, nome: nomeMapWfm[id] || id }));
+            }
           }
         }
 
@@ -537,12 +554,14 @@ export default async function handler(req, res) {
         if (bpGroupId) {
           const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100`);
           if (dg2.entities) {
-            dg2.entities.forEach(m => {
-              let userObj = m.user || m || {};
-              let idReal = userObj.id || m.id;
-              let nomeReal = m.name || userObj.name || 'Operador';
-              if (idReal) membros.push({ id: idReal, nome: nomeReal });
-            });
+            const idsBP = dg2.entities.map(m => (m.user && m.user.id) || m.id).filter(Boolean);
+            if (idsBP.length > 0) {
+              const idsQBP = idsBP.map(id => `id=${encodeURIComponent(id)}`).join('&');
+              const rNamesBP = await callGenesys(`/api/v2/users?pageSize=100&${idsQBP}`);
+              const nomeMapBP = {};
+              if (rNamesBP.entities) rNamesBP.entities.forEach(u => { if (u.id) nomeMapBP[u.id] = u.name || u.id; });
+              idsBP.forEach(id => membros.push({ id, nome: nomeMapBP[id] || id }));
+            }
           }
         }
         if (membros.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {} });
