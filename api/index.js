@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // Configuração Global de Headers CORS
+  // Configuração Global de Headers CORS para a Brisanet
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -7,8 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ erro: 'Método não permitido' });
 
-  // Captura o endpoint dinâmico enviado pelo frontend através da URL ou do corpo
-  // Ajustado para ler a rota tanto pela URL (ex: /api?action=listarFilas) quanto adaptado pelo arquivo index.html
+  // Captura a ação dinamicamente através do parâmetro action na URL
   const urlParts = req.url.split('?');
   const actionPath = urlParts[0].replace('/api/', '').replace('/api', '').trim();
   const action = actionPath || req.query.action || req.body.action;
@@ -16,7 +15,7 @@ export default async function handler(req, res) {
   const { token, baseUrl } = req.body;
   let cleanUrl = (baseUrl || 'https://api.sae1.pure.cloud').trim().replace(/\/$/, '');
 
-  // Helper interno universal para requisições no Genesys Cloud
+  // Cliente HTTP Universal Genesys Cloud
   async function callGenesys(path, method = 'get', payload = null) {
     const opts = {
       method: method.toUpperCase(),
@@ -30,7 +29,6 @@ export default async function handler(req, res) {
     return text ? JSON.parse(text) : {};
   }
 
-  // SWITCH CENTRALIZADO DE ROTAS (Reduz para 1 única Serverless Function na Vercel)
   try {
     switch (action) {
       
@@ -63,40 +61,37 @@ export default async function handler(req, res) {
         return res.status(200).json(data.entities.map(t => ({ id: t.id, nome: t.name })));
       }
 
-     case 'buscarMembrosGrupo': {
+      case 'buscarMembrosGrupo': {
         const { teamId } = req.body;
-        // Faz a chamada para a API de membros da equipa do Genesys
         const data = await callGenesys(`/api/v2/teams/${teamId}/members?pageSize=100`);
         if (data.erro || !data.entities) return res.status(200).json({ membros: [] });
         
-        const membrosFiltrados = data.entities
-          .map(m => {
-            // Correção Crítica: No Genesys Cloud, os dados do agente vêm dentro do objeto 'user'
-            let userObj = m.user || {};
-            let idDetectado = userObj.id || m.id || '';
-            let nomeDetectado = userObj.name || m.name || 'Operador Desconhecido';
-            
-            return {
-              id: idDetectado,
-              nome: nomeDetectado,
-              name: nomeDetectado
-            };
-          })
-          // Filtra para garantir que não entram registos vazios ou falhados
-          .filter(m => m.id !== '' && m.nome !== 'Operador Desconhecido');
-        
-        // Ordena de A-Z pelo nome dos agentes
+        const membrosFiltrados = data.entities.map(m => {
+          let userObj = m.user || {};
+          let idDetectado = userObj.id || m.id || '';
+          let nomeDetectado = m.name || userObj.name || 'Operador Desconhecido';
+          return { id: idDetectado, nome: nomeDetectado };
+        }).filter(m => m.id !== '');
+
         membrosFiltrados.sort((a, b) => a.nome.localeCompare(b.nome));
-        
         return res.status(200).json({ membros: membrosFiltrados });
       }
+
+      case 'buscarWrapupsDaFila': {
+        const { queueId } = req.body;
+        const data = await callGenesys(`/api/v2/routing/queues/${queueId}/wrapupcodes?pageSize=100`);
+        if (data.erro || !data.entities) return res.status(200).json([]);
+        return res.status(200).json(data.entities.map(w => ({ id: w.id, nome: w.name })));
+      }
+
       case 'carregarDadosDashboard': {
         const { queueId, groupId, intervaloIso, ehHoje } = req.body;
         let membrosGrupo = null;
         if (groupId) {
           const resGrupo = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
-          if (resGrupo.entities) membrosGrupo = resGrupo.entities.map(m => m.id);
+          if (resGrupo.entities) membrosGrupo = resGrupo.entities.map(m => m.id || (m.user && m.user.id));
         }
+        
         const dicPresencas = {};
         const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres.entities) {
@@ -104,19 +99,24 @@ export default async function handler(req, res) {
             dicPresencas[p.id] = (p.languageLabels && (p.languageLabels["pt-BR"] || p.languageLabels["pt_BR"])) || p.name;
           });
         }
+        
         const traducoesPadrao = { "Available": "Disponível", "Break": "Pausa Básica", "Meal": "Pausa Refeição", "Meeting": "Reunião", "Training": "Treinamento", "Away": "Ausente do PC", "Busy": "Ocupado" };
         let agentes = []; let paginaAtual = 1; let temMaisDados = true; let interagindoAgoraGlobal = 0;
 
         while (temMaisDados) {
           const rUsers = await callGenesys(`/api/v2/routing/queues/${queueId}/members?expand=presence&expand=routingStatus&expand=conversationSummary&pageSize=100&pageNumber=${paginaAtual}`);
-          if (rUsers.erro || !rUsers.entities) break;
+          if (rUsers.erro || !rUsers.entities || !rUsers.entities.length) break;
+          
           rUsers.entities.forEach(member => {
-            let uObj = member.user || member; let userId = uObj.id || member.id;
+            let uObj = member.user || member || {}; 
+            let userId = uObj.id || member.id;
             if (membrosGrupo && membrosGrupo.indexOf(userId) === -1) return;
+            
             let rStatus = (member.routingStatus || uObj.routingStatus || {}).status || "UNKNOWN";
             let presenceDef = (member.presence || uObj.presence || {}).presenceDefinition || {};
             let sysPresence = presenceDef.systemPresence || "Offline";
             let modifiedDate = (member.presence || uObj.presence || {}).modifiedDate || new Date().toISOString();
+            
             let qtdInteracoes = 0;
             if (member.conversationSummary) {
               ['call', 'callback', 'chat', 'email', 'message', 'socialExpression', 'video'].forEach(c => {
@@ -124,6 +124,7 @@ export default async function handler(req, res) {
               });
             }
             interagindoAgoraGlobal += qtdInteracoes;
+            
             let statusAmigavel = "Offline"; let tipoClass = "offline";
             if (sysPresence !== "Offline") {
               if (sysPresence === "On Queue") {
@@ -136,6 +137,7 @@ export default async function handler(req, res) {
                 tipoClass = (sysPresence === "Available" || sysPresence === "Interacting") ? "acw" : "break";
               }
             }
+            
             agentes.push({
               id: userId, nome: member.name || uObj.name || "Operador Desconhecido", status: statusAmigavel, sysClass: tipoClass,
               pausaMs: Date.now() - new Date(modifiedDate).getTime(), interagindo: qtdInteracoes, email: uObj.email || ''
@@ -143,6 +145,7 @@ export default async function handler(req, res) {
           });
           if (!rUsers.nextUri) temMaisDados = false; else paginaAtual++;
         }
+        
         let esperandoAgora = 0;
         const rObs = await callGenesys('/api/v2/analytics/queues/observations/query', 'post', { "filter": { "type": "and", "predicates": [ { "type": "dimension", "dimension": "queueId", "value": queueId } ] }, "metrics": ["oWaiting"] });
         if (rObs.results && rObs.results[0]?.data) rObs.results[0].data.forEach(d => { if(d.metric === 'oWaiting') esperandoAgora = d.stats.count || 0; });
@@ -160,6 +163,7 @@ export default async function handler(req, res) {
             if (m.metric === "oServiceLevel" && m.stats) { resultFila.slaNumerator += m.stats.numerator||0; resultFila.slaDenominator += m.stats.denominator||0; if (m.stats.ratio !== undefined) resultFila.slaRatioFallback = m.stats.ratio; }
           })));
         }
+        
         const rAggAgentes = await callGenesys('/api/v2/analytics/conversations/aggregates/query', 'post', { "interval": intervaloIso, "groupBy": ["userId", "mediaType"], "filter": { "type": "and", "predicates": [ { "type": "dimension", "dimension": "queueId", "value": queueId } ] }, "metrics": ["tHandle", "tAcw", "tHeld", "nTransferred"] });
         let mapAgentes = {};
         if (rAggAgentes.results) {
@@ -176,11 +180,13 @@ export default async function handler(req, res) {
             }
           });
         }
+        
         agentes.forEach(a => {
            let st = mapAgentes[a.id] || { handCnt:0, handSum:0, acwSum:0, heldSum:0, trans:0 };
            a.atendidas = st.handCnt; a.aht = st.handCnt > 0 ? Math.round(st.handSum / st.handCnt / 1000) : 0;
            a.acwMedio = st.handCnt > 0 ? Math.round(st.acwSum / st.handCnt / 1000) : 0; a.transferencias = st.trans;
         });
+        
         let slaFinal = 100.0; if (resultFila.slaDenominator > 0) slaFinal = (resultFila.slaNumerator / resultFila.slaDenominator) * 100; else if (resultFila.slaRatioFallback !== null) slaFinal = resultFila.slaRatioFallback * 100;
         return res.status(200).json({
           ok: true, isRealTime: typeof ehHoje === 'string' ? ehHoje === 'true' : !!ehHoje,
@@ -220,7 +226,7 @@ export default async function handler(req, res) {
         let k = { atendidas: 0, atendidasVoice: 0, atendidasDigital: 0, aht: 0, acwMedio: 0, tmeMedio: 0, transferencias: 0 };
         if (rAgg.results?.[0]?.data) {
           rAgg.results[0].data.forEach(d => d.metrics?.forEach(m => {
-            if (m.metric === "tHandle") { k.atendidas += m.stats.count||0; k.atendidasVoice += m.stats.count||0; k.aht = m.stats.count > 0 ? Math.round(m.stats.sum/m.stats.count/1000) : 0; }
+            if (m.metric === "tHandle") { k.atendidas += m.stats.count||0; k.aht = m.stats.count > 0 ? Math.round(m.stats.sum/m.stats.count/1000) : 0; }
             if (m.metric === "tAcw" && k.atendidas > 0) k.acwMedio = Math.round(m.stats.sum/k.atendidas/1000);
             if (m.metric === "nTransferred") k.transferencias += m.stats.count||0;
           }));
@@ -237,66 +243,123 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, novoStatus: 'Offline' });
       }
 
-     case 'processarAuditoriaOutbound': {
+      // =================================═════════════════════
+      //  CORREÇÃO CRÍTICA: AUDITORIA OUTBOUND COM NOMES E TABULAÇÕES REAIS
+      // =================================═════════════════════
+      case 'processarAuditoriaOutbound': {
         const { idFila, intervaloStr } = req.body;
-        
-        // 1. Busca os membros da fila atual para criar um cache de Nome Real baseado no ID
-        const cacheNomesOutbound = {};
+
+        // Caches para evitar estouro de requisições
+        const cacheNomes = {};
+        const cacheWrapups = {};
+
+        // Busca o dicionário de wrapups da organização para traduzir os IDs
         try {
-          const rUsersFila = await callGenesys(`/api/v2/routing/queues/${idFila}/members?pageSize=100`);
-          if (rUsersFila.entities) {
-            rUsersFila.entities.forEach(m => {
-              let uObj = m.user || m || {};
-              if (uObj.id) cacheNomesOutbound[uObj.id] = uObj.name || m.name || "Operador";
-            });
+          const rW = await callGenesys(`/api/v2/routing/queues/${idFila}/wrapupcodes?pageSize=100`);
+          if (rW.entities) rW.entities.forEach(w => { cacheWrapups[w.id] = w.name; });
+        } catch(e) {}
+
+        let paginaAtual = 1; let temMaisDados = true; let agrupamento = {};
+
+        while (temMaisDados) {
+          const payload = { 
+            "interval": intervaloStr, 
+            "segmentFilters": [{ "type": "and", "predicates": [ {"dimension": "mediaType", "value": "voice"}, {"dimension": "direction", "value": "outbound"}, {"dimension": "queueId", "value": idFila} ] }], 
+            "paging": {"pageSize": 100, "pageNumber": paginaAtual} 
+          };
+          const response = await callGenesys("/api/v2/analytics/conversations/details/query", "post", payload);
+          if (response.erro) return res.status(200).json({ error: true, message: "Erro na extração: " + response.erro });
+          
+          const conversas = response.conversations || [];
+          if (conversas.length === 0) { 
+            temMaisDados = false; 
+          } else {
+            for (let i = 0; i < conversas.length; i++) {
+              let conv = conversas[i];
+              let dataFormatada = "Desconhecida"; let dataHoraOriginal = "Desconhecida"; let duracaoTotal = 0;
+              
+              if (conv.conversationStart) { 
+                let ds = new Date(conv.conversationStart);
+                dataHoraOriginal = ds.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+                let dataSplit = conv.conversationStart.split('T')[0].split('-'); 
+                dataFormatada = `${dataSplit[2]}/${dataSplit[1]}/${dataSplit[0]}`;
+                if(conv.conversationEnd) duracaoTotal = new Date(conv.conversationEnd).getTime() - ds.getTime();
+              }
+              
+              let durSeg = Math.round(duracaoTotal / 1000);
+              let durFormatada = String(Math.floor(durSeg/60)).padStart(2,'0') + "m " + String(durSeg%60).padStart(2,'0') + "s";
+
+              let numeroLimpo = null; let agenteId = null; let wrapupId = null;
+              let participants = conv.participants || [];
+              
+              for (let p = 0; p < participants.length; p++) {
+                let part = participants[p];
+                if (part.purpose === "customer" || part.purpose === "external") {
+                  let sessions = part.sessions || [];
+                  for (let s = 0; s < sessions.length; s++) {
+                    let num = sessions[s].dnis || sessions[s].ani || "";
+                    if (num) numeroLimpo = num.replace("tel:", "").replace("+", "").trim();
+                  }
+                }
+                if (part.purpose === "agent" || part.purpose === "user") {
+                  if (part.userId) agenteId = part.userId;
+                  let sessionsAgent = part.sessions || [];
+                  for (let sa = 0; sa < sessionsAgent.length; sa++) {
+                    let segments = sessionsAgent[sa].segments || [];
+                    for (let sg = 0; sg < segments.length; sg++) {
+                      if (sg.wrapUpCode) wrapupId = sg.wrapUpCode;
+                    }
+                  }
+                }
+              }
+              
+              if (numeroLimpo && agenteId) {
+                // Captura do DDD Brisanet (Mapeamento regional Nordeste)
+                let soNumeros = numeroLimpo.replace(/\D/g, '');
+                let ddd = "N/A";
+                if (soNumeros.startsWith('55') && soNumeros.length >= 12) ddd = soNumeros.substring(2, 4);
+                else if (soNumeros.startsWith('0') && soNumeros.length >= 11) ddd = soNumeros.substring(1, 3);
+                else if (soNumeros.length >= 10) ddd = soNumeros.substring(0, 2);
+
+                let chave = `${dataFormatada}|${ddd}|${numeroLimpo}|${agenteId}|${wrapupId || 'Sem'}`;
+                if (!agrupamento[chave]) agrupamento[chave] = { tentativas: 0, detalhes: [] }; 
+                agrupamento[chave].tentativas++; 
+                agrupamento[chave].detalhes.push({ dataHora: dataHoraOriginal, duracao: durFormatada });
+              }
+            }
+            paginaAtual++;
           }
-        } catch (e) { console.error("Erro ao montar cache outbound:", e); }
-
-        // 2. Executa a query de detalhes de conversações outbound
-        const r = await callGenesys("/api/v2/analytics/conversations/details/query", "post", { 
-          "interval": intervaloStr, 
-          "segmentFilters": [{ 
-            "type": "and", 
-            "predicates": [ 
-              {"dimension": "mediaType", "value": "voice"}, 
-              {"dimension": "direction", "value": "outbound"}, 
-              {"dimension": "queueId", "value": idFila} 
-            ] 
-          }], 
-          "paging": {"pageSize": 100, "pageNumber": 1} 
-        });
-        
-        let arr = [];
-        if (r.conversations) {
-          r.conversations.forEach(c => {
-            let num = c.participants?.find(p => p.purpose === 'customer')?.sessions?.[0]?.dnis || 'N/A';
-            let agId = c.participants?.find(p => p.purpose === 'agent')?.userId || 'Desconhecido';
-            
-            // CONVERSÃO CRÍTICA: Busca o nome real do cache; se não achar, exibe o ID encurtado
-            let nomeExibicaoAgente = cacheNomesOutbound[agId] || (agId !== 'Desconhecido' ? "Agente (" + agId.substring(0,5) + ")" : "Desconhecido");
-            
-            arr.push({ 
-              data: new Date(c.conversationStart).toLocaleDateString('pt-BR'), 
-              ddd: '88', 
-              numero: num, 
-              agente: nomeExibicaoAgente, 
-              wrapup: 'Outbound', 
-              tentativas: 1, 
-              detalhes: [] 
-            });
-          });
         }
-        return res.status(200).json({ error: false, data: arr.filter(x => x.numero !== 'N/A') });
+        
+        let linhasRelatorio = []; let chaves = Object.keys(agrupamento);
+        for (let k = 0; k < chaves.length; k++) { 
+          let partes = chaves[k].split("|");
+          if (agrupamento[chaves[k]].tentativas > 1) {
+            let aId = partes[3];
+            if (!cacheNomes[aId]) {
+              try {
+                let rU = await callGenesys(`/api/v2/users/${aId}`);
+                cacheNomes[aId] = rU.name || aId;
+              } catch(e) { cacheNomes[aId] = aId; }
+            }
+            
+            let wId = partes[4];
+            let wrapupNomeCompleto = cacheWrapups[wId] || (wId.startsWith("ININ-") ? wId.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") : "Sem Finalização");
+
+            linhasRelatorio.push({ 
+              data: partes[0], ddd: partes[1], numero: partes[2], 
+              agente: cacheNomes[aId], 
+              wrapup: wrapupNomeCompleto, 
+              tentativas: agrupamento[chaves[k]].tentativas,
+              detalhes: agrupamento[chaves[k]].detalhes 
+            });
+          } 
+        }
+        linhasRelatorio.sort((a, b) => b.tentativas - a.tentativas);
+        return res.status(200).json({ error: false, data: linhasRelatorio });
       }
 
-      case 'buscarWrapupsDaFila': {
-        const { queueId } = req.body;
-        const data = await callGenesys(`/api/v2/routing/queues/${queueId}/wrapupcodes?pageSize=100`);
-        if (!data.entities) return res.status(200).json([]);
-        return res.status(200).json(data.entities.map(w => ({ id: w.id, nome: w.name })));
-      }
-
-      case 'buscarConversasPara Lote': {
+      case 'buscarConversasParaLote': {
         const { queueId, wrapupId, intervaloIso, limite } = req.body;
         const preds = [{ "dimension": "queueId", "value": queueId }, { "dimension": "mediaType", "value": "message" }];
         if (wrapupId) preds.push({ "dimension": "wrapUpCode", "value": wrapupId });
@@ -322,11 +385,13 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, relatorioHTML: iaResult.split('===')[1] || iaResult, cliente, agente, wrapup: 'Retenção', desfechoLote: 'Retido', id: conversationId });
       }
 
+      // =================================═════════════════════
+      //  CORREÇÃO CRÍTICA: MOTOR E CRUIZAMENTO COMPLETO DE PAUSAS WFM Meta 10m/20m
+      // =================================═════════════════════
       case 'auditarPausasWFM': {
         const { groupId, userId, intervaloIso } = req.body;
-        const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos de tolerância fixa
+        const TOLERANCIA_GERAL_MS = 2 * 60000; // 2 minutos fixa
 
-        // 1. Dicionário de presenças para traduzir os IDs internos em strings limpas
         const dicPresencas = {};
         const resPres = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres.entities) {
@@ -336,51 +401,40 @@ export default async function handler(req, res) {
         }
         const traducoesPadrao = { "ON_QUEUE": "Fila", "AVAILABLE": "Disponível", "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
 
-        // 2. Mapeia o cadastro completo dos alvos da equipe
         let mapeamentoEquipeCompleta = [];
         if (userId) {
           try {
             const rSingle = await callGenesys(`/api/v2/users/${userId}`);
-            if (!rSingle.erro) mapeamentoEquipeCompleta.push({ id: rSingle.id, nome: rSingle.name || "Agente" });
+            if (!rSingle.erro) mapeamentoEquipeCompleta.push({ id: rSingle.id, nome: rSingle.name });
           } catch {}
         } else {
           const dg = await callGenesys(`/api/v2/teams/${groupId}/members?pageSize=100`);
           if (dg.entities) {
             dg.entities.forEach(m => {
               let uObj = m.user || m || {};
-              if (uObj.id) {
-                mapeamentoEquipeCompleta.push({ 
-                  id: uObj.id, 
-                  nome: m.name || uObj.name || "Operador" 
-                });
-              }
+              if (uObj.id) mapeamentoEquipeCompleta.push({ id: uObj.id, nome: m.name || uObj.name || "Operador" });
             });
           }
         }
 
-        if (mapeamentoEquipeCompleta.length === 0) {
-          return res.status(200).json({ ok: true, dados: [] });
-        }
+        if (mapeamentoEquipeCompleta.length === 0) return res.status(200).json({ ok: true, dados: [] });
 
-        // 3. Executa a query de detalhes de presença na Timeline do Analytics do Genesys
         const payloadWfm = {
           "interval": intervaloIso,
           "userFilters": [{ "type": "or", "predicates": mapeamentoEquipeCompleta.map(m => ({ "dimension": "userId", "value": m.id })) }]
         };
 
         const dataQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadWfm);
-        
         let timelinePorUsuario = {};
+
         if (!dataQuery.erro && dataQuery.userDetails) {
           dataQuery.userDetails.forEach(u => {
             let historicoPausas = [];
-            
             if (u.primaryPresence) {
               u.primaryPresence.forEach(pres => {
                 let pDefId = pres.presenceDefinitionId;
                 let nomeStatus = dicPresencas[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
                 
-                // Ignora estados comuns produtivos/offline
                 if (pres.systemPresence !== "AVAILABLE" && pres.systemPresence !== "OFFLINE" && pres.systemPresence !== "ON_QUEUE") {
                   let inicio = new Date(pres.startTime);
                   let fim = pres.endTime ? new Date(pres.endTime) : new Date();
@@ -388,22 +442,17 @@ export default async function handler(req, res) {
 
                   if (duracaoMs > 0) {
                     let tempoTotalMin = Math.floor(duracaoMs / 60000);
-                    let estourou = false;
-                    let tempoEstouroMin = 0;
-
+                    let estourou = false; let tempoEstouroMin = 0;
                     let sysUpper = pres.systemPresence.toUpperCase();
                     let nomeUpper = nomeStatus.toUpperCase();
 
-                    // Regra rígida Brisanet: Pausa Auricular (10m + 2m) e Refeição (20m + 2m)
                     if (sysUpper === "BREAK" || nomeUpper.includes("AURICULAR") || nomeUpper.includes("PAUSA 10")) {
                       if (duracaoMs > (10 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true;
-                        tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
+                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (10 * 60000)) / 60000);
                       }
                     } else if (sysUpper === "MEAL" || nomeUpper.includes("REFEIÇÃO") || nomeUpper.includes("ALMOÇO")) {
                       if (duracaoMs > (20 * 60000) + TOLERANCIA_GERAL_MS) {
-                        estourou = true;
-                        tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
+                        estourou = true; tempoEstouroMin = Math.floor((duracaoMs - (20 * 60000)) / 60000);
                       }
                     }
 
@@ -423,28 +472,15 @@ export default async function handler(req, res) {
           });
         }
 
-        // 4. União absoluta: Cruza a lista de pessoas do time com os dados extraídos
-        let resultadoFinal = mapeamentoEquipeCompleta.map(agenteCadastro => {
-          let dadosTimeline = timelinePorUsuario[agenteCadastro.id] || { pausas: [] };
-          let listaDePausas = dadosTimeline.pausas;
-          let totalEstouros = listaDePausas.filter(p => p.estourou).length;
-
+        let resultadoFinal = mapeamentoEquipeCompleta.map(ag => {
+          let tData = timelinePorUsuario[ag.id] || { pausas: [] };
           return {
-            userId: agenteCadastro.id,
-            nome: agenteCadastro.nome,
-            pausas: listaDePausas,
-            totalEstourosNoPeriodo: totalEstouros
+            userId: ag.id, nome: ag.nome, pausas: tData.pausas,
+            totalEstourosNoPeriodo: tData.pausas.filter(p => p.estourou).length
           };
         });
 
-        // Ordenação inteligente: Infratores graves no topo, seguidos por ordem alfabética dos demais
-        resultadoFinal.sort((a, b) => {
-          if (b.totalEstourosNoPeriodo !== a.totalEstourosNoPeriodo) {
-            return b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo;
-          }
-          return a.nome.localeCompare(b.nome);
-        });
-
+        resultadoFinal.sort((a, b) => b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo || a.nome.localeCompare(b.nome));
         return res.status(200).json({ ok: true, dados: resultadoFinal });
       }
 
