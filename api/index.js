@@ -535,7 +535,7 @@ export default async function handler(req, res) {
       case 'buscarAgentesPorPausa': {
         const { groupId: bpGroupId, intervaloIso: bpIntervalo } = req.body;
 
-        // 1. Buscar definições de presença (igual ao auditarPausasWFM)
+        // 1. Buscar definições de presença
         const dicPresencasBP = {};
         const resPres2 = await callGenesys('/api/v2/presencedefinitions?pageSize=100');
         if (resPres2.entities) {
@@ -549,24 +549,22 @@ export default async function handler(req, res) {
           });
         }
 
-        // 2. Buscar membros da equipe — lógica idêntica ao auditarPausasWFM
+        // 2. Buscar membros da equipe usando expand=entities para evitar limites de URL no Genesys
         let membros = [];
         if (bpGroupId) {
-          const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100`);
+          const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100&expand=entities`);
           if (dg2.entities) {
-            const idsBP = dg2.entities.map(m => (m.user && m.user.id) || m.id).filter(Boolean);
-            if (idsBP.length > 0) {
-              const idsQBP = idsBP.map(id => `id=${encodeURIComponent(id)}`).join('&');
-              const rNamesBP = await callGenesys(`/api/v2/users?pageSize=100&${idsQBP}`);
-              const nomeMapBP = {};
-              if (rNamesBP.entities) rNamesBP.entities.forEach(u => { if (u.id) nomeMapBP[u.id] = u.name || u.id; });
-              idsBP.forEach(id => membros.push({ id, nome: nomeMapBP[id] || id }));
-            }
+            dg2.entities.forEach(m => {
+              let userObj = m.user || m || {};
+              let id = userObj.id || m.id;
+              let nome = userObj.name || m.name || id;
+              if (id) membros.push({ id, nome });
+            });
           }
         }
-        if (membros.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {} });
+        if (membros.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
 
-        // 3. Buscar timeline de presença — payload idêntico ao auditarPausasWFM
+        // 3. Buscar timeline de presença
         const payloadBP = {
           "interval": bpIntervalo,
           "userFilters": [{ "type": "or", "predicates": membros.map(m => ({ "dimension": "userId", "value": m.id })) }]
@@ -577,19 +575,17 @@ export default async function handler(req, res) {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 5. Processar userDetails — lógica idêntica ao auditarPausasWFM, mas agrupando por pausa
-        const pausaMap = {}; // { pausaNome: [ entradas brutas ] }
+        // 5. Processar userDetails
+        const pausaMap = {}; 
         const EXCLUIDOS_SYS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
 
         if (!bpQuery.erro && bpQuery.userDetails) {
           bpQuery.userDetails.forEach(u => {
-            // Tenta pegar o nome do nomeMap; fallback para nome que o Genesys pode trazer
             const nomeAgente = nomeMap[u.userId] || u.userId;
 
             (u.primaryPresence || []).forEach(pres => {
               if (EXCLUIDOS_SYS.has(pres.systemPresence)) return;
 
-              // Resolve nome do status — igual ao auditarPausasWFM
               let pDefId = pres.presenceDefinitionId;
               const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
               let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
@@ -628,7 +624,8 @@ export default async function handler(req, res) {
         });
 
         const pausasOrdenadas = Object.keys(resultado).sort();
-        return res.status(200).json({ ok: true, pausas: pausasOrdenadas, agentesMap: resultado });
+        // CORREÇÃO: Enviando o array de membros consolidado
+        return res.status(200).json({ ok: true, pausas: pausasOrdenadas, agentesMap: resultado, membros: membros });
       }
 
       default:
