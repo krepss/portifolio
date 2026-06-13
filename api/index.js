@@ -409,18 +409,94 @@ export default async function handler(req, res) {
 
       case 'processarAuditoriaIA': {
         const { conversationId, provider, model, apiKey, customPrompt } = req.body;
+        
+        // 1. Busca metadados da conversa no Genesys
         const cData = await callGenesys(`/api/v2/conversations/${conversationId}`);
+        if (cData.erro) return res.status(200).json({ ok: false, erro: 'Erro ao buscar conversa no Genesys: ' + cData.erro });
+
         let cliente = cData.participants?.find(p => p.purpose === 'customer')?.name || 'Desconhecido';
         let agente = cData.participants?.find(p => p.purpose === 'agent')?.name || 'Operador';
-        let prompt = `Analise a retenção Brisanet do cliente ${cliente}. Prompt customizado: ${customPrompt || 'Padrão'}`;
-        let iaResult = "CLIENTE: " + cliente + "\nDESFECHO: Retido\n===\n<h4>Resumo</h4><p>Atendimento realizado.</p>";
         
-        if (provider === 'gemini') {
-          const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-          const gJson = await gRes.json();
-          if (gJson.candidates?.[0]?.content?.parts?.[0]?.text) iaResult = gJson.candidates[0].content.parts[0].text;
+        // ⚠️ ALERTA: Aqui precisamos injetar a busca da transcrição real!
+        let transcricaoDaConversa = "[A transcrição da conversa ainda não está sendo puxada do Genesys. A IA não tem o que ler.]";
+
+        // 2. Montagem do Prompt Padrão
+        let systemPrompt = `Você é um auditor de qualidade da Brisanet especialista em retenção. 
+        Analise a transcrição do atendimento e gere um laudo. 
+        Responda obrigatoriamente em formato HTML, usando as tags <h4> para títulos das seções e <ul>/<li> para listas. Não use markdown como \`\`\`html.`;
+        
+        let userPrompt = `Cliente: ${cliente}\nOperador: ${agente}\n\nInstruções Específicas do Auditor: ${customPrompt || 'Faça um resumo geral e diga se o cliente foi retido ou não.'}\n\n--- TRANSCRIÇÃO DO ATENDIMENTO ---\n${transcricaoDaConversa}`;
+
+        let iaResult = "";
+
+        try {
+          if (provider === 'gemini') {
+            const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt + "\n\n" + userPrompt }] }] })
+            });
+            const gJson = await gRes.json();
+            if (gJson.error) throw new Error(gJson.error.message);
+            iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "Erro: Resposta vazia do Gemini.";
+          } 
+          else if (provider === 'groq') {
+            const gRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: model,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: userPrompt }
+                ],
+                temperature: 0.2
+              })
+            });
+            const gJson = await gRes.json();
+            if (gJson.error) throw new Error(gJson.error.message);
+            iaResult = gJson.choices?.[0]?.message?.content || "Erro: Resposta vazia do Groq.";
+          }
+          else if (provider === 'nvidia') {
+            const nRes = await fetch(`https://integrate.api.nvidia.com/v1/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: model,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: userPrompt }
+                ],
+                temperature: 0.2,
+                max_tokens: 2048
+              })
+            });
+            const nJson = await nRes.json();
+            if (nJson.error) throw new Error(nJson.error.message);
+            iaResult = nJson.choices?.[0]?.message?.content || "Erro: Resposta vazia da NVIDIA.";
+          } 
+          else {
+            throw new Error("Provedor de IA desconhecido selecionado.");
+          }
+        } catch (e) {
+          return res.status(200).json({ ok: false, erro: 'Falha na comunicação com a API da IA: ' + e.message });
         }
-        return res.status(200).json({ ok: true, relatorioHTML: iaResult.split('===')[1] || iaResult, cliente, agente, wrapup: 'Retenção', desfechoLote: 'Retido', id: conversationId });
+
+        // 3. Limpeza de formatação e envio para a tela
+        iaResult = iaResult.replace(/```html/gi, '').replace(/```/g, '').trim();
+
+        // Extração simples do desfecho (futuramente podemos melhorar isso exigindo um JSON da IA)
+        let desfechoLote = iaResult.toLowerCase().includes('cancelado') ? 'Cancelado' : 'Retido';
+
+        return res.status(200).json({ 
+          ok: true, 
+          relatorioHTML: iaResult, 
+          cliente, 
+          agente, 
+          wrapup: 'Auditoria IA', 
+          desfechoLote: desfechoLote, 
+          id: conversationId 
+        });
       }
 
       case 'auditarPausasWFM': {
