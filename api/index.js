@@ -599,7 +599,7 @@ case 'buscarAgentesPorPausa': {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 4. Buscar timeline de presença no Analytics
+        // 4. Buscar timeline de presença no Analytics (COM O CORRETIVO DA API DE PRESENÇA)
         let allUserDetails = [];
         for (let i = 0; i < membros.length; i += 50) {
           const chunkMembros = membros.slice(i, i + 50);
@@ -617,6 +617,21 @@ case 'buscarAgentesPorPausa': {
                     "dimension": "userId",
                     "value": m.id
                   }))
+              }],
+              // Obriga o Genesys a trazer o histórico mesmo de quem não atendeu ligações
+              "presenceFilters": [{
+                  "type": "or",
+                  "predicates": [
+                    { "type": "dimension", "dimension": "systemPresence", "value": "AVAILABLE" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "AWAY" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "BREAK" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "MEAL" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "MEETING" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "TRAINING" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "BUSY" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "ON_QUEUE" },
+                    { "type": "dimension", "dimension": "systemPresence", "value": "OFFLINE" }
+                  ]
               }]
             };
             
@@ -680,7 +695,6 @@ case 'buscarAgentesPorPausa': {
         const pausasOrdenadas = Object.keys(resultado).sort();
         return res.status(200).json({ ok: true, pausas: pausasOrdenadas, agentesMap: resultado, membros: membros });
       }
-
       default:
         return res.status(404).json({ erro: `Ação operacional '${action}' desconhecida no roteador.` });
     }
