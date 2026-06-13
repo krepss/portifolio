@@ -452,7 +452,7 @@ tbody tr:hover td { background: var(--bg); }
         <div style="display:flex;flex-direction:column;gap:12px;flex:1">
           <div style="display:flex;gap:16px;flex-wrap:wrap">
             <div class="cb-item"><label style="color:var(--purple)">ID da Interação</label><input type="text" id="ia-conversation-id" placeholder="Ex: a1b2c3d4-..." style="min-width:280px;border-color:var(--purple)"></div>
-            <div class="cb-item"><label style="color:var(--purple)">Motor IA</label><select id="ia-provider" style="border-color:var(--purple)" onchange="updateModelsIA();salvarProviderIA()"><option value="groq">Groq Cloud</option><option value="gemini">Google Gemini</option></select></div>
+            <div class="cb-item"><label style="color:var(--purple)">Motor IA</label><select id="ia-provider" style="border-color:var(--purple)" onchange="updateModelsIA();salvarProviderIA()"><option value="groq">Groq Cloud</option><option value="gemini">Google Gemini</option><option value="nvidia">NVIDIA NIM</option></select></div>
             <div class="cb-item"><label style="color:var(--purple)">Modelo</label><select id="ia-model" style="border-color:var(--purple)" onchange="salvarModeloIA()"></select></div>
             <div class="cb-item"><label style="color:var(--purple)">Chave API</label><input type="password" id="ia-api-key" placeholder="Chave..." style="min-width:220px;border-color:var(--purple)" onchange="salvarChaveIA()"></div>
           </div>
@@ -525,7 +525,7 @@ tbody tr:hover td { background: var(--bg); }
             <div class="cb-item">
               <label style="color:var(--purple)">Motor / Modelo</label>
               <div class="cb-row">
-                <select id="lote-provider" style="border-color:var(--purple);min-width:100px" onchange="updateModelsLoteIA()"><option value="groq">Groq</option><option value="gemini">Gemini</option></select>
+                <select id="lote-provider" style="border-color:var(--purple);min-width:100px" onchange="updateModelsLoteIA()"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="nvidia">NVIDIA NIM</option></select>
                 <select id="lote-model" style="border-color:var(--purple);min-width:140px"></select>
               </div>
             </div>
@@ -1329,9 +1329,13 @@ function updateModelsIA() {
   if (prov === 'groq') {
     sel.add(new Option('Llama 3.3 70B','llama-3.3-70b-versatile'));
     sel.add(new Option('Llama 3.1 8B', 'llama-3.1-8b-instant'));
-  } else {
+  } else if (prov === 'gemini') {
     sel.add(new Option('Gemini 2.5 Flash','gemini-2.5-flash'));
     sel.add(new Option('Gemini 3.5 Flash','gemini-3.5-flash'));
+  } else if (prov === 'nvidia') {
+    sel.add(new Option('Llama 3.1 405B Instruct', 'meta/llama-3.1-405b-instruct'));
+    sel.add(new Option('Llama 3.1 70B Instruct', 'meta/llama-3.1-70b-instruct'));
+    sel.add(new Option('Nemotron 70B', 'nvidia/llama-3.1-nemotron-70b-instruct'));
   }
   var saved = localStorage.getItem('bn_ia_model');
   if (saved) { var opt = Array.from(sel.options).find(function(o){ return o.value === saved; }); if(opt) sel.value = saved; }
@@ -1344,9 +1348,13 @@ function updateModelsLoteIA() {
   if (prov === 'groq') {
     sel.add(new Option('Llama 3.3 70B','llama-3.3-70b-versatile'));
     sel.add(new Option('Llama 3.1 8B', 'llama-3.1-8b-instant'));
-  } else {
+  } else if (prov === 'gemini') {
     sel.add(new Option('Gemini 2.5 Flash','gemini-2.5-flash'));
     sel.add(new Option('Gemini 3.5 Flash','gemini-3.5-flash'));
+  } else if (prov === 'nvidia') {
+    sel.add(new Option('Llama 3.1 405B Instruct', 'meta/llama-3.1-405b-instruct'));
+    sel.add(new Option('Llama 3.1 70B Instruct', 'meta/llama-3.1-70b-instruct'));
+    sel.add(new Option('Nemotron 70B', 'nvidia/llama-3.1-nemotron-70b-instruct'));
   }
 }
 
