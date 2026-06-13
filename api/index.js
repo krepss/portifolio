@@ -434,146 +434,218 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, ids: ids });
       }
 
-      case 'processarAuditoriaIA': {
+     case 'processarAuditoriaIA': {
         const { conversationId, provider, model, apiKey, customPrompt } = req.body;
         
-        // 1. Busca metadados da conversa
+        // 1. Busca metadados da conversa no Genesys
         const cData = await callGenesys(`/api/v2/conversations/${conversationId}`);
-        if (cData.erro) return res.status(200).json({ ok: false, erro: 'Erro ao buscar conversa: ' + cData.erro });
+        if (cData.erro) return res.status(200).json({ ok: false, erro: 'Erro ao buscar conversa no Genesys: ' + cData.erro });
 
-        let cliente = cData.participants?.find(p => p.purpose === 'customer' || p.purpose === 'external')?.name || 'Desconhecido';
-        let agente  = cData.participants?.find(p => p.purpose === 'agent' || p.purpose === 'user')?.name || 'Operador';
-        
-        // 2. Extração do Histórico (Focado em Canais Digitais)
-        let transcricaoDaConversa = "";
-        try {
-          // Tenta primeiro a rota de Messaging (WhatsApp, WebMessaging, Redes Sociais)
-          const rMessages = await callGenesys(`/api/v2/conversations/messages/${conversationId}/messages`);
-          if (rMessages && rMessages.entities && rMessages.entities.length > 0) {
-            rMessages.entities.sort((a, b) => new Date(a.time) - new Date(b.time));
-            transcricaoDaConversa = rMessages.entities.map(m => {
-                let remetente = m.direction === 'inbound' ? 'Cliente' : 'Operador/Bot';
-                let texto = m.textBody || '[Mídia/Documento/Imagem]';
-                return `${remetente}: ${texto}`;
-            }).join("\n");
-          } else {
-            // Se vier vazio, tenta a rota de Legacy WebChat
-            const rChats = await callGenesys(`/api/v2/conversations/chats/${conversationId}/messages`);
-            if (rChats && rChats.entities && rChats.entities.length > 0) {
-              rChats.entities.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-              transcricaoDaConversa = rChats.entities.map(m => {
-                  let remetente = (m.sender?.type === 'agent' || m.sender?.type === 'bot') ? 'Operador/Bot' : 'Cliente';
-                  let texto = m.body || '[Ação/Mídia]';
-                  return `${remetente}: ${texto}`;
-              }).join("\n");
-            } else {
-              transcricaoDaConversa = "[Nenhuma mensagem textual digital encontrada para este ID.]";
-            }
+        // Função interna para extração segura do nome do cliente (Mapeada do seu Code.gs)
+        let cliente = "Desconhecido";
+        let customerPart = cData.participants?.find(p => p.purpose === 'customer' || p.purpose === 'external');
+        if (customerPart) {
+          cliente = customerPart.name || "Não Identificado";
+          if (customerPart.attributes) {
+            Object.keys(customerPart.attributes).forEach(key => {
+              let lKey = key.toLowerCase();
+              if (lKey.includes('nome') || lKey.includes('name') || lKey === 'contatonome') {
+                let val = String(customerPart.attributes[key]).trim();
+                if (val && val.length > 2 && !/^[\d\+\s]+$/.test(val)) {
+                  cliente = val;
+                }
+              }
+            });
           }
-        } catch(e) {
-          transcricaoDaConversa = `[Erro ao extrair histórico de mensagens: ${e.message}]`;
+          cliente = String(cliente).split('|')[0].split('/')[0].split('-')[0].trim();
+          if (/^[\d\+\s\:]+$/.test(cliente) || cliente.toLowerCase() === 'guest' || cliente.toLowerCase() === 'cliente') {
+            cliente = "Não Identificado";
+          }
         }
 
-        // 2. Montagem do Prompt de Auditoria Altamente Refinado (Brisanet Negócio)
-        let systemPrompt = `Você é um Auditor Cognitivo de Qualidade sênior da Brisanet, especialista em analisar atendimentos de Retenção nos canais digitais (WhatsApp e Chat).
-        Sua missão é analisar friamente o histórico do chat fornecido e gerar um laudo analítico detalhado.
+        // Puxa operadores e constrói a lista de tabulações (Mapeado do seu Code.gs)
+        let nomesAgentes = [];
+        let tabulacoesLista = [];
+        let communicationIds = [];
 
-        Critérios obrigatórios que você deve avaliar no texto:
-        1. SONDAGEM: O operador tentou descobrir o motivo real do pedido de cancelamento (ex: preço, concorrência, mudança de endereço, falha técnica)?
-        2. CONTORNO DE OBJEÇÃO: O operador tentou reter o cliente usando os argumentos corretos da empresa (oferta de desconto, upgrade de plano, visita técnica gratuita, etc.)?
-        3. POSTURA DIGITAL: O atendente foi cordial, usou ortografia adequada e evitou respostas robóticas ou demoras excessivas?
-        4. VEREDITO DO DESFECHO: Com base estritamente na última decisão documentada do cliente no chat, determine se o caso foi "Retido" (cliente aceitou manter o plano) ou "Cancelado" (cliente recusou as propostas ou o atendimento foi encerrado sem acordo).
+        (cData.participants || []).forEach(p => {
+          if (p.purpose === 'agent' || p.purpose === 'user') {
+            let agName = p.name || "Operador Desconhecido";
+            if (!nomesAgentes.includes(agName)) nomesAgentes.push(agName);
+            
+            // Varre segmentos de sessões digitais para pegar o código de finalização
+            let wName = "Sem Tabulação";
+            ['messages', 'chats'].forEach(media => {
+              if (p[media] && Array.isArray(p[media])) {
+                p[media].forEach(s => {
+                  if (s.id && !communicationIds.includes(s.id)) communicationIds.push(s.id);
+                  (s.segments || []).forEach(sg => {
+                    if (sg.wrapUpCode) {
+                      wName = sg.wrapUpCode.startsWith("ININ-") 
+                        ? sg.wrapUpCode.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") 
+                        : sg.wrapUpCode;
+                    }
+                  });
+                });
+              }
+            });
+            tabulacoesLista.push(`<b>${agName}:</b> ${wName}`);
+          }
+        });
 
-        REGRAS DE FORMATAÇÃO DO LAUDO (OBRIGATÓRIO):
-        - Sua resposta deve ser escrita APENAS em código HTML limpo, pronto para exibição em painel.
-        - Use a tag <h4> para os títulos de cada seção.
-        - Use as tags <ul> e <li> para organizar os pontos analisados.
-        - NÃO utilize blocos de código markdown como \`\`\`html ou marcadores de texto em negrito do tipo **texto**. Use tags HTML como <strong> se quiser enfatizar algo.
-        
-        Sua estrutura de resposta deve conter as seções:
-        <h4>Resumo Crítico do Atendimento</h4> (Breve contextualização do que aconteceu)
-        <h4>Análise dos Critérios de Retenção</h4> (Onde você lista como foi a sondagem, contorno e postura)
-        <h4>Pontos de Melhoria / Feedback</h4> (Instruções claras para o supervisor passar para o operador)
-        <h4>Desfecho Conclusivo</h4> (Escreva explicitamente a palavra 'Retido' ou 'Cancelado' com a justificativa final)`;
-        
-        let userPrompt = `Cliente: ${cliente}\nOperador: ${agente}\n\nInstruções Específicas do Auditor: ${customPrompt || 'Faça um resumo e diga claramente se o cliente foi retido ou se cancelou o plano.'}\n\n--- TRANSCRIÇÃO DO ATENDIMENTO ---\n${transcricaoDaConversa}`;
+        let agente = nomesAgentes.join(", ") || "Nenhum Humano";
+        let wrapup = tabulacoesLista.join(" <br> ") || "Nenhuma Tabulação Registrada";
+
+        // 2. Extração Real das Mensagens Digitais pelo Servidor de Transcrições (O Segredo do Code.gs)
+        var frasesBrutas = [];
+        for (let mediaId of communicationIds) {
+          try {
+            const tUrl = `/api/v2/speechandtextanalytics/conversations/${conversationId}/communications/${mediaId}/transcripturls`;
+            const resT = await callGenesys(tUrl, 'get');
+            if (resT && resT.urls && Array.isArray(resT.urls)) {
+              for (let u of resT.urls) {
+                // Requisição externa para o repositório seguro (S3 do Genesys)
+                const resS3 = await fetch(u.url);
+                if (resS3.ok) {
+                  const transcritosObj = await resS3.json();
+                  if (transcritosObj.transcripts && Array.isArray(transcritosObj.transcripts)) {
+                    transcritosObj.transcripts.forEach(t => {
+                      if (t.phrases && Array.isArray(t.phrases)) {
+                        t.phrases.forEach(phrase => frasesBrutas.push(phrase));
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Falha ao ler bloco de mídias:", e.message);
+          }
+        }
+
+        if (frasesBrutas.length === 0) {
+          return res.status(200).json({ ok: false, erro: 'Nenhuma transcrição digital encontrada pelo motor de Analytics para esta conversa.' });
+        }
+
+        // Ordena a cronologia das mensagens digitais
+        frasesBrutas.sort((a, b) => {
+          var timeA = a.startTimeMs ? Number(a.startTimeMs) : (a.startTime ? new Date(a.startTime).getTime() : 0);
+          var timeB = b.startTimeMs ? Number(b.startTimeMs) : (b.startTime ? new Date(b.startTime).getTime() : 0);
+          return timeA - timeB;
+        });
+
+        var transcricao = "";
+        frasesBrutas.forEach(phrase => {
+          var purpose = String(phrase.participantPurpose || "").toLowerCase();
+          var speaker = "CLIENTE";
+          if (purpose === "agent" || purpose === "user") {
+              speaker = "OPERADOR HUMANO"; 
+          } else if (['botflow', 'workflow', 'acd', 'ivr', 'system'].includes(purpose)) {
+              speaker = "SISTEMA/URA";
+          }
+          transcricao += `${speaker}: ${phrase.text}\n`;
+        });
+
+        // 3. Montagem do Prompt de Orientação Estruturado (Igual ao seu Code.gs original)
+        let instrucoesDinamicas = customPrompt && customPrompt.trim() !== "" 
+          ? customPrompt.trim() 
+          : `1. Resumo do Caso: O que o cliente solicitou e qual foi o motivo real do cancelamento/insatisfação alegado?
+2. Tratativa de Retenção: O(s) Operador(es) Humano(s) aplicou(ram) técnicas para reter o cliente? IMPORTANTE: O sistema/URA não realiza ofertas nem retém clientes. Foque a avaliação apenas na postura dos operadores humanos.
+3. Tabulação: As tabulações aplicadas refletem corretamente o desfecho da conversa?
+4. Feedback da IA: Apresente sua visão analítica. É um atendimento aprovado, passível de feedback ou crítico?`;
+
+        const promptFinal = `Você é um auditor sênior de qualidade e retenção da empresa de telecomunicações Brisanet.
+DADOS DA INTERAÇÃO NO SISTEMA:
+- Nome capturado: ${cliente} | Operadores: ${agente} | Tabulações: ${wrapup.replace(/<[^>]*>/g, '')}
+TRANSCRIÇÃO DO ATENDIMENTO:
+${transcricao}
+INSTRUÇÕES DE ANÁLISE:
+${instrucoesDinamicas}
+
+REGRAS DE FORMATAÇÃO — SIGA EXATAMENTE ESTA ESTRUTURA:
+Sua resposta DEVE começar com exatamente estas duas linhas (sem texto antes, sem asteriscos, sem numeração):
+
+CLIENTE: [nome real do cliente extraído da transcrição, ou a palavra: Não identificado]
+DESFECHO: [escreva APENAS UMA das três opções a seguir, sem parênteses nem explicação adicional: Retido | Cancelado | Outro]
+
+Em seguida, coloque exatamente três sinais de igual em uma linha separada:
+===
+[Depois do === escreva o relatório de auditoria em HTML simples usando: <h4>, <ul>, <li>, <p> e <strong>. Nunca use blocos de código]`;
 
         let iaResult = "";
 
-        // 4. Conexão com os provedores de IA (Blindado contra erros de parsing)
+        // 4. Disparo para as APIs (Gemini, Groq ou NVIDIA)
         try {
           if (provider === 'gemini') {
             const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt + "\n\n" + userPrompt }] }] })
+              body: JSON.stringify({ contents: [{ parts: [{ text: promptFinal }] }] })
             });
-            if (!gRes.ok) throw new Error(`HTTP ${gRes.status} - ${await gRes.text()}`);
+            if (!gRes.ok) throw new Error(`HTTP ${gRes.status}`);
             const gJson = await gRes.json();
-            if (gJson.error) throw new Error(gJson.error.message);
-            iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "Erro: Resposta vazia.";
+            iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "";
           } 
           else if (provider === 'groq') {
-            const gRes = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+            const qRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: model,
-                messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-                temperature: 0.1
-              })
+              headers: { 'Authorization': 'Bearer ' + apiKey.trim(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2 })
             });
-            if (!gRes.ok) throw new Error(`HTTP ${gRes.status} - ${await gRes.text()}`);
-            const gJson = await gRes.json();
-            if (gJson.error) throw new Error(gJson.error.message);
-            iaResult = gJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
+            if (!qRes.ok) throw new Error(`HTTP ${qRes.status}`);
+            const qJson = await qRes.json();
+            iaResult = qJson.choices?.[0]?.message?.content || "";
           }
           else if (provider === 'nvidia') {
-            // CORREÇÃO: URL unificada do catálogo de APIs da NVIDIA
             const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
               method: 'POST',
-              headers: { 
-                'Authorization': `Bearer ${apiKey.trim()}`, 
-                'Content-Type': 'application/json' 
-              },
-              body: JSON.stringify({
-                model: model,
-                messages: [
-                  { role: "system", content: systemPrompt }, 
-                  { role: "user", content: userPrompt }
-                ],
-                temperature: 0.1,
-                max_tokens: 2048
-              })
+              headers: { 'Authorization': 'Bearer ' + apiKey.trim(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2, max_tokens: 2048 })
             });
-            if (!nRes.ok) throw new Error(`HTTP ${nRes.status} - ${await nRes.text()}`);
+            if (!nRes.ok) throw new Error(`HTTP ${nRes.status}`);
             const nJson = await nRes.json();
-            if (nJson.error) throw new Error(nJson.error.message);
-            iaResult = nJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
-          }
-          else {
-            throw new Error("Provedor não suportado.");
+            iaResult = nJson.choices?.[0]?.message?.content || "";
           }
         } catch (e) {
-          // Extrai os primeiros 200 caracteres do erro para não poluir a tela inteira
-          return res.status(200).json({ ok: false, erro: `Falha na IA (${provider}): ${e.message.substring(0, 200)}` });
+          return res.status(200).json({ ok: false, erro: `Falha de comunicação com a IA (${provider}): ` + e.message });
         }
 
-        iaResult = iaResult.replace(/```html/gi, '').replace(/```/g, '').trim();
-        
-        // Verifica na resposta final gerada o desfecho provável para colorir a tabela em lote
-        let strAnalise = iaResult.toLowerCase();
-        let desfechoLote = 'Outro';
-        if (strAnalise.includes('cancelado') || strAnalise.includes('não retido')) desfechoLote = 'Cancelado';
-        else if (strAnalise.includes('retido') || strAnalise.includes('retenção efetuada')) desfechoLote = 'Retido';
+        // 5. Parser de Cabeçalho Estruturado (Portado e Otimizado do seu Code.gs)
+        iaResult = iaResult.replace(/```html/g, '').replace(/```/g, '').trim();
+        iaResult = iaResult.replace(/\*\*(CLIENTE:|DESFECHO:)\*\/gi, '$1').replace(/\*(CLIENTE:|DESFECHO:)\*/gi, '$1');
+
+        let nomeClienteFinal = cliente;
+        let htmlFinal = iaResult;
+        let statusLote = "Outro";
+
+        if (iaResult.includes('===')) {
+          let idxSep = iaResult.indexOf('===');
+          let cabecalho = iaResult.substring(0, idxSep).trim();
+          htmlFinal = iaResult.substring(idxSep + 3).trim();
+
+          cabecalho.split('\n').forEach(linha => {
+            let lUpper = linha.trim().toUpperCase();
+            if (lUpper.startsWith('CLIENTE:')) {
+              let extraido = linha.substring(linha.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '').replace(/\*+/g, '').trim();
+              if (extraido && !['não identificado', 'desconhecido', 'cliente'].includes(extraido.toLowerCase())) {
+                nomeClienteFinal = extraido;
+              }
+            }
+            if (lUpper.startsWith('DESFECHO:')) {
+              let dRaw = linha.substring(linha.indexOf(':') + 1).trim().replace(/\*+/g, '').replace(/[()\[\]]/g, '').trim().toUpperCase();
+              if (dRaw.includes('RETID')) statusLote = 'Retido';
+              else if (dRaw.includes('CANCEL')) statusLote = 'Cancelado';
+            }
+          });
+        }
 
         return res.status(200).json({ 
           ok: true, 
-          relatorioHTML: iaResult, 
-          cliente, 
-          agente, 
-          wrapup: 'Auditado por IA', 
-          desfechoLote: desfechoLote, 
+          relatorioHTML: htmlFinal, 
+          cliente: nomeClienteFinal, 
+          agente: agente, 
+          wrapup: wrapup, 
+          desfechoLote: statusLote, 
           id: conversationId 
         });
       }
