@@ -910,6 +910,52 @@ case 'buscarAgentesPorPausa': {
         const pausasOrdenadas = Object.keys(resultado).sort();
         return res.status(200).json({ ok: true, pausas: pausasOrdenadas, agentesMap: resultado, membros: membros });
       }
+
+case 'buscarConversasParaLote': {
+        const { queueId, wrapupId, intervaloIso, limite } = req.body;
+        
+        // 1. Monta os predicados no nível de Segmento (idêntico ao Code.gs original)
+        const predicates = [
+          { "type": "dimension", "dimension": "queueId", "value": queueId }
+        ];
+        
+        // Se houver filtro de tabulação na tela, injeta no array
+        if (wrapupId) {
+          predicates.push({ "type": "dimension", "dimension": "wrapUpCode", "value": wrapupId });
+        }
+
+        const payload = {
+          "interval": intervaloIso,
+          "segmentFilters": [
+            { 
+              "type": "and", 
+              "predicates": predicates 
+            },
+            {
+              // Filtro de Mídia Digital unificado no nível de segmento para evitar o erro 404
+              "type": "or",
+              "predicates": [
+                { "type": "dimension", "dimension": "mediaType", "value": "message" },
+                { "type": "dimension", "dimension": "mediaType", "value": "chat" }
+              ]
+            }
+          ],
+          "paging": { 
+            "pageSize": parseInt(limite) || 10, 
+            "pageNumber": 1 
+          }
+        };
+
+        const data = await callGenesys('/api/v2/analytics/conversations/details/query', 'post', payload);
+        
+        // Se a API falhar ou vier vazia, previne quebra devolvendo array vazio
+        if (data.erro || !data.conversations) {
+          return res.status(200).json({ ok: true, ids: [] });
+        }
+
+        const ids = data.conversations.map(c => c.conversationId);
+        return res.status(200).json({ ok: true, ids: ids });
+      }        
       default:
         return res.status(404).json({ erro: `Ação operacional '${action}' desconhecida no roteador.` });
     }
