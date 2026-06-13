@@ -613,14 +613,66 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
             iaResult = qJson.choices?.[0]?.message?.content || "";
           }
           else if (provider === 'nvidia') {
-            const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + apiKey.trim(), 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2, max_tokens: 2048 })
-            });
-            if (!nRes.ok) throw new Error(`HTTP ${nRes.status}`);
-            const nJson = await nRes.json();
-            iaResult = nJson.choices?.[0]?.message?.content || "";
+            if (model === 'nvidia-tribunal-experts') {
+              // ============================================================
+              // TRIBUNAL DE IAS - PASSO 1: O AUDITOR (Llama 3.3 70B)
+              // ============================================================
+              const resAuditor = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: 'meta/llama-3.3-70b-instruct', // Alterado para o modelo sênior estável em 2026
+                  messages: [{ role: "user", content: promptFinal }],
+                  temperature: 0.2,
+                  max_tokens: 1500
+                })
+              });
+              if (!resAuditor.ok) throw new Error(`HTTP ${resAuditor.status} na Auditoria`);
+              const jsonAuditor = await resAuditor.json();
+              const laudoProvisorio = jsonAuditor.choices?.[0]?.message?.content || "";
+
+              // ============================================================
+              // TRIBUNAL DE IAS - PASSO 2: O JUIZ (Nemotron 70B)
+              // ============================================================
+              const promptJuiz = `Você é o Juiz de Qualidade Supremo da Brisanet. Sua única função é revisar o laudo técnico emitido por uma IA auditora e a transcrição original do atendimento, garantindo que o veredito final (Retido ou Cancelado) esteja 100% correto.
+
+              TRANSCRIÇÃO ORIGINAL:
+              ${transcricao}
+
+              LAUDO DA IA AUDITORA:
+              ${laudoProvisorio}
+
+              REGRAS CRÍTICAS DO JUIZ:
+              1. Analise se o cliente aceitou de fato a proposta ou se ele apenas abandonou o chat após a oferta (abandono após oferta = CANCELADO).
+              2. Sua resposta final DEVE seguir estritamente a estrutura exigida pelo sistema da Brisanet, mas você tem o poder de alterar o DESFECHO e adicionar uma seção de "Revisão do Juiz" no HTML se notar que a IA Auditora errou ou foi leniente.
+
+              Escreva sua resposta exatamente no formato exigido pelo sistema, mantendo as duas primeiras linhas e o separador === antes do HTML final.`;
+
+              const resJuiz = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                  messages: [{ role: "user", content: promptJuiz }],
+                  temperature: 0.1, // Temperatura ultrabaixa para precisão metodológica
+                  max_tokens: 2048
+                })
+              });
+              if (!resJuiz.ok) throw new Error(`HTTP ${resJuiz.status} no Juizado`);
+              const jsonJuiz = await resJuiz.json();
+              iaResult = jsonJuiz.choices?.[0]?.message?.content || "";
+
+            } else {
+              // FLUXO PADRÃO NVIDIA (Caso selecione apenas um modelo individual)
+              const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2, max_tokens: 2048 })
+              });
+              if (!nRes.ok) throw new Error(`HTTP ${nRes.status}`);
+              const nJson = await nRes.json();
+              iaResult = nJson.choices?.[0]?.message?.content || "";
+            }
           }
         } catch (e) {
           return res.status(200).json({ ok: false, erro: `Falha de comunicação com a IA (${provider}): ` + e.message });
