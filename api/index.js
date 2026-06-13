@@ -481,7 +481,7 @@ export default async function handler(req, res) {
         let agente = nomesAgentes.join(", ") || "Nenhum Humano";
         let wrapup = tabulacoesLista.join(" <br> ") || "Nenhuma Tabulação Registrada";
 
-        // 2. Extração Real das Mensagens Digitais pelo Servidor de Transcrições (O Segredo do Code.gs)
+        // 2. Extração Real das Mensagens Digitais pelo Servidor de Transcrições (Com Plano B para evitar Lag de Cache)
         var frasesBrutas = [];
         for (let mediaId of communicationIds) {
           try {
@@ -489,7 +489,6 @@ export default async function handler(req, res) {
             const resT = await callGenesys(tUrl, 'get');
             if (resT && resT.urls && Array.isArray(resT.urls)) {
               for (let u of resT.urls) {
-                // Requisição externa para o repositório seguro (S3 do Genesys)
                 const resS3 = await fetch(u.url);
                 if (resS3.ok) {
                   const transcritosObj = await resS3.json();
@@ -504,12 +503,44 @@ export default async function handler(req, res) {
               }
             }
           } catch (e) {
-            console.error("Falha ao ler bloco de mídias:", e.message);
+            console.error("Falha ao ler bloco analítico:", e.message);
           }
         }
 
+        // 🚨 PLANO B: Se o Genesys ainda não gerou a URL no S3, busca direto no chat ativo da conversa
         if (frasesBrutas.length === 0) {
-          return res.status(200).json({ ok: false, erro: 'Nenhuma transcrição digital encontrada pelo motor de Analytics para esta conversa.' });
+          try {
+            const rMessages = await callGenesys(`/api/v2/conversations/messages/${conversationId}/messages`);
+            if (rMessages && rMessages.entities && rMessages.entities.length > 0) {
+              rMessages.entities.forEach(m => {
+                let purpose = m.direction === 'inbound' ? 'customer' : 'agent';
+                frasesBrutas.push({
+                  participantPurpose: purpose,
+                  text: m.textBody || '[Mídia/Imagem]',
+                  startTimeMs: new Date(m.time).getTime()
+                });
+              });
+            } else {
+              const rChats = await callGenesys(`/api/v2/conversations/chats/${conversationId}/messages`);
+              if (rChats && rChats.entities && rChats.entities.length > 0) {
+                rChats.entities.forEach(m => {
+                  let purpose = (m.sender?.type === 'agent' || m.sender?.type === 'bot') ? 'agent' : 'customer';
+                  frasesBrutas.push({
+                    participantPurpose: purpose,
+                    text: m.body || '[Ação]',
+                    startTimeMs: new Date(m.timestamp).getTime()
+                  });
+                });
+              }
+            }
+          } catch (e) {
+            console.error("Falha no fallback de mensagens diretas:", e.message);
+          }
+        }
+
+        // Se mesmo com o Plano B não achar nada, aí sim barra a requisição
+        if (frasesBrutas.length === 0) {
+          return res.status(200).json({ ok: false, erro: 'Nenhuma transcrição digital ou histórico de mensagens localizado para esta conversa.' });
         }
 
         // Ordena a cronologia das mensagens digitais
