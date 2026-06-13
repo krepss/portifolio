@@ -534,7 +534,7 @@ export default async function handler(req, res) {
 case 'buscarAgentesPorPausa': {
         const { groupId: bpGroupId, intervaloIso: bpIntervalo } = req.body;
 
-        // 1. Buscar TODAS as definições de presença
+        // 1. Buscar TODAS as definições de presença (para nomear as pausas corretamente)
         const dicPresencasBP = {};
         let pPage = 1;
         let temMaisPresencas = true;
@@ -595,43 +595,60 @@ case 'buscarAgentesPorPausa': {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 4. Buscar timeline de presença no Analytics
+        // 4. ABORDAGEM INDIVIDUAL: Consultar o cronograma de CADA agente, um por um (lotes de 5 para performance)
         let allUserDetails = [];
-        // LOTE DE 10 AGENTES: Garante que a API do Genesys não corte dados por limite de banda/tamanho.
-        for (let i = 0; i < membros.length; i += 10) {
-          const chunkMembros = membros.slice(i, i + 10);
-          let pageNum = 1;
-          let hasMoreAnalytics = true;
+        const chunkSize = 5; 
+        
+        for (let i = 0; i < membros.length; i += chunkSize) {
+          const pedaco = membros.slice(i, i + chunkSize);
           
-          while (hasMoreAnalytics) {
-            const payloadBP = {
-              "interval": bpIntervalo,
-              "paging": { "pageSize": 100, "pageNumber": pageNum },
-              "userFilters": [{
-                  "type": "or",
-                  "predicates": chunkMembros.map(m => ({
-                    "type": "dimension",
-                    "dimension": "userId",
-                    "value": m.id
-                  }))
-              }]
-            };
-            
-            const bpQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadBP);
-            
-            if (bpQuery.erro || !bpQuery.userDetails) {
-              hasMoreAnalytics = false; 
-            } else {
-              allUserDetails = allUserDetails.concat(bpQuery.userDetails);
-              if (bpQuery.userDetails.length < 100) hasMoreAnalytics = false;
-              else pageNum++;
-            }
-          }
+          // Promise.all executa as 5 consultas individuais ao mesmo tempo
+          const promessas = pedaco.map(async (m) => {
+             let pageNum = 1;
+             let hasMore = true;
+             let agentDetails = null;
+
+             while (hasMore) {
+                const payload = {
+                  "interval": bpIntervalo,
+                  "paging": { "pageSize": 100, "pageNumber": pageNum },
+                  // Consulta EXCLUSIVA para o agente atual
+                  "userFilters": [{
+                      "type": "or",
+                      "predicates": [{ "type": "dimension", "dimension": "userId", "value": m.id }]
+                  }]
+                };
+                
+                const res = await callGenesys('/api/v2/analytics/users/details/query', 'post', payload);
+                if (res.erro || !res.userDetails || res.userDetails.length === 0) {
+                  hasMore = false;
+                } else {
+                  if (!agentDetails) {
+                    agentDetails = res.userDetails[0];
+                  } else if (res.userDetails[0].primaryPresence) {
+                    agentDetails.primaryPresence = (agentDetails.primaryPresence || []).concat(res.userDetails[0].primaryPresence);
+                  }
+                  
+                  if (!res.userDetails[0].primaryPresence || res.userDetails[0].primaryPresence.length < 100) {
+                     hasMore = false;
+                  } else {
+                     pageNum++;
+                  }
+                }
+             }
+             return agentDetails;
+          });
+
+          // Aguarda o lote de 5 agentes terminar e os insere na lista final
+          const resultadosLote = await Promise.all(promessas);
+          resultadosLote.forEach(det => {
+            if (det) allUserDetails.push(det);
+          });
         }
 
-        // 5. Processar userDetails (agrupando por Pausa -> Agente)
+        // 5. Processar os eventos cronológicos de cada um
         const pausaMap = {}; 
-
+        
         allUserDetails.forEach(u => {
           const nomeAgente = nomeMap[u.userId] || u.userId;
           (u.primaryPresence || []).forEach(pres => {
@@ -640,10 +657,9 @@ case 'buscarAgentesPorPausa': {
             const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
             let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
 
-            // FILTRO INTELIGENTE: Remove apenas status base de sistema inofensivos.
-            // Se "OFFLINE" for o nome de uma pausa customizada, ele não será bloqueado.
+            // Remove os status padrões de rotina do sistema, focando só nas pausas
             const statusUp = nomeStatus.toUpperCase();
-            if (['AVAILABLE', 'DISPONÍVEL', 'ON_QUEUE', 'ON QUEUE', 'FILA', 'OFFLINE'].includes(statusUp)) {
+            if (['AVAILABLE', 'DISPONÍVEL', 'ON_QUEUE', 'ON QUEUE', 'FILA', 'OFFLINE', 'OFF-LINE'].includes(statusUp)) {
                 return;
             }
 
@@ -664,7 +680,7 @@ case 'buscarAgentesPorPausa': {
           });
         });
 
-        // 6. Consolidar estrutura Final
+        // 6. Consolidar os dados para enviar ao painel
         const resultado = {};
         Object.keys(pausaMap).forEach(pausaNome => {
           const porAgente = {};
