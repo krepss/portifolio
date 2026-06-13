@@ -1613,42 +1613,38 @@ function acionarWFMUnificado() {
   callApi('buscarAgentesPorPausa', { groupId: S.wfmGrupoId, intervaloIso: intervalo })
     .then(function(r) {
       document.getElementById('wfm-loading').style.display = 'none';
-      if (r.erro) { showToast(r.erro); document.getElementById('wfm-vazio').style.display = 'block'; return; }
+
+      if (!r || r.erro) {
+        showToast(r ? r.erro : 'Erro desconhecido ao consultar pausas.');
+        document.getElementById('wfm-vazio').style.display = 'block';
+        return;
+      }
 
       _wfmDadosUnificados   = r.agentesMap || {};
-      _wfmPausasDisponiveis = r.pausas || [];
+      _wfmPausasDisponiveis = r.pausas     || [];
       _wfmPausaSelecionada  = null;
 
-      // Constrói lista completa de agentes (união de todos que apareceram em qualquer pausa)
+      // A API já retorna a lista completa de membros da equipe em r.membros
+      // Agrupa também quem apareceu em pausas mas não está na lista (segurança)
       var agenteMap = {};
+
+      // 1. Membros confirmados da equipe (sem pausa no período aparecem zerados)
+      (r.membros || []).forEach(function(m) {
+        if (m.id) agenteMap[m.id] = m.nome || m.id;
+      });
+
+      // 2. Quem apareceu em alguma pausa mas não estava na lista de membros
       _wfmPausasDisponiveis.forEach(function(p) {
         (_wfmDadosUnificados[p] || []).forEach(function(ag) {
-          if (!agenteMap[ag.userId]) agenteMap[ag.userId] = ag.nome;
+          if (ag.userId && !agenteMap[ag.userId]) agenteMap[ag.userId] = ag.nome || ag.userId;
         });
       });
 
-      // Busca membros da equipe para incluir agentes sem nenhuma pausa no período
-      callApi('buscarMembrosGrupo', { teamId: S.wfmGrupoId })
-        .then(function(membros) {
-          var rawList = membros.membros || membros || [];
-          rawList.forEach(function(m) {
-            if (m.id && !agenteMap[m.id]) {
-              agenteMap[m.id] = m.nome || m.name || 'Operador';
-            }
-          });
-          _wfmListaAgentes = Object.keys(agenteMap).map(function(id) {
-            return { id: id, nome: agenteMap[id] };
-          }).sort(function(a,b){ return a.nome.localeCompare(b.nome); });
+      _wfmListaAgentes = Object.keys(agenteMap).map(function(id) {
+        return { id: id, nome: agenteMap[id] };
+      }).sort(function(a, b) { return a.nome.localeCompare(b.nome, 'pt-BR'); });
 
-          renderWFMUnificado();
-        })
-        .catch(function() {
-          // Fallback: usa só quem tem pausa
-          _wfmListaAgentes = Object.keys(agenteMap).map(function(id) {
-            return { id: id, nome: agenteMap[id] };
-          }).sort(function(a,b){ return a.nome.localeCompare(b.nome); });
-          renderWFMUnificado();
-        });
+      renderWFMUnificado();
     })
     .catch(function(e) {
       document.getElementById('wfm-loading').style.display = 'none';
