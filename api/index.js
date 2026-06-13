@@ -531,11 +531,10 @@ export default async function handler(req, res) {
         resultadoFinal.sort((a, b) => b.totalEstourosNoPeriodo - a.totalEstourosNoPeriodo || a.nome.localeCompare(b.nome));
         return res.status(200).json({ ok: true, dados: resultadoFinal });
       }
-
-      case 'buscarAgentesPorPausa': {
+case 'buscarAgentesPorPausa': {
         const { groupId: bpGroupId, intervaloIso: bpIntervalo } = req.body;
 
-        // 1. Buscar TODAS as definições de presença (paginado para achar as subpausas)
+        // 1. Buscar TODAS as definições de presença
         const dicPresencasBP = {};
         let pPage = 1;
         let temMaisPresencas = true;
@@ -557,7 +556,7 @@ export default async function handler(req, res) {
           }
         }
 
-        // 2. Buscar puramente os IDs dos membros da equipe
+        // 2. Buscar IDs dos membros da equipe
         let membrosIds = [];
         if (bpGroupId) {
           let tmPage = 1;
@@ -577,14 +576,12 @@ export default async function handler(req, res) {
           }
         }
 
-        // Remove duplicados caso a API da equipe oscile
         membrosIds = [...new Set(membrosIds)];
-
         if (membrosIds.length === 0) {
             return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
         }
 
-        // 3. Buscar nomes reais (usando a rota raiz de usuários, que é blindada contra falhas de escopo)
+        // 3. Buscar nomes reais fatiados
         let membros = [];
         for (let i = 0; i < membrosIds.length; i += 50) {
           const chunkIds = membrosIds.slice(i, i + 50);
@@ -595,7 +592,6 @@ export default async function handler(req, res) {
                if (u.id) membros.push({ id: u.id, nome: u.name || u.id });
             });
           } else {
-             // Fallback: se falhar, preserva o ID para não quebrar a tela
              chunkIds.forEach(id => membros.push({ id, nome: id }));
           }
         }
@@ -603,38 +599,25 @@ export default async function handler(req, res) {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-       // 4. Buscar timeline de presença (Fatiado e Paginado dentro do Analytics)
+        // 4. Buscar timeline de presença no Analytics
         let allUserDetails = [];
-        
         for (let i = 0; i < membros.length; i += 50) {
           const chunkMembros = membros.slice(i, i + 50);
           let pageNum = 1;
           let hasMoreAnalytics = true;
           
           while (hasMoreAnalytics) {
-            // Cria os predicados com os IDs dos agentes do bloco atual
-            const userPredicates = chunkMembros.map(m => ({
-              "type": "dimension",
-              "dimension": "userId",
-              "value": m.id
-            }));
-
             const payloadBP = {
               "interval": bpIntervalo,
               "paging": { "pageSize": 100, "pageNumber": pageNum },
-              "userFilters": [
-                {
+              "userFilters": [{
                   "type": "or",
-                  "predicates": userPredicates
-                }
-              ],
-              // A CORREÇÃO ESTÁ AQUI: Obriga o Genesys a ler o banco de dados de Presença
-              "presenceFilters": [
-                {
-                  "type": "or",
-                  "predicates": userPredicates
-                }
-              ]
+                  "predicates": chunkMembros.map(m => ({
+                    "type": "dimension",
+                    "dimension": "userId",
+                    "value": m.id
+                  }))
+              }]
             };
             
             const bpQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadBP);
@@ -643,35 +626,23 @@ export default async function handler(req, res) {
               hasMoreAnalytics = false; 
             } else {
               allUserDetails = allUserDetails.concat(bpQuery.userDetails);
-              // Avança a página se o bloco trouxer 100 registros preenchidos
               if (bpQuery.userDetails.length < 100) hasMoreAnalytics = false;
               else pageNum++;
             }
           }
         }
 
-        // 5. Processar userDetails
+        // 5. Processar userDetails (agrupando por Pausa -> Agente)
         const pausaMap = {}; 
         const EXCLUIDOS_SYS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
 
         allUserDetails.forEach(u => {
           const nomeAgente = nomeMap[u.userId] || u.userId;
-
           (u.primaryPresence || []).forEach(pres => {
             if (EXCLUIDOS_SYS.has(pres.systemPresence)) return;
 
-            // Busca pelo ID da organização primeiro (Subpausas)
             let pDefId = pres.organizationPresenceId || pres.presenceDefinitionId;
-            
-            const traducoesPadrao = { 
-              "AWAY": "Ausente", 
-              "BREAK": "Pausa Auricular", 
-              "MEAL": "Refeição", 
-              "MEETING": "Reunião", 
-              "TRAINING": "Treinamento", 
-              "BUSY": "Ocupado" 
-            };
-            
+            const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
             let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
 
             const inicio = new Date(pres.startTime);
@@ -691,7 +662,7 @@ export default async function handler(req, res) {
           });
         });
 
-        // 6. Consolidar por agente
+        // 6. Consolidar estrutura Final
         const resultado = {};
         Object.keys(pausaMap).forEach(pausaNome => {
           const porAgente = {};
