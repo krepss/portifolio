@@ -591,48 +591,20 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
         let iaResult = "";
 
         // 4. Disparo para as APIs (Gemini, Groq ou NVIDIA)
+       // 4. Disparo para as APIs (Groq ou Gemini - Consolidados e Estáveis)
         try {
-          if (provider === 'gemini') {
-            const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contents: [{ parts: [{ text: promptFinal }] }] })
-            });
-            if (!gRes.ok) throw new Error(`HTTP ${gRes.status}`);
-            const gJson = await gRes.json();
-            iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          } 
-          else if (provider === 'groq') {
-            const qRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + apiKey.trim(), 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2 })
-            });
-            if (!qRes.ok) throw new Error(`HTTP ${qRes.status}`);
-            const qJson = await qRes.json();
-            iaResult = qJson.choices?.[0]?.message?.content || "";
-          }
-         else if (provider === 'nvidia') {
-            // Configuração de cabeçalhos robustos para evitar o "fetch failed" em HTTP/2
-            const nvidiaHeaders = { 
-              'Authorization': `Bearer ${apiKey.trim()}`, 
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CommandCenter/2.0'
-            };
-
-            if (model === 'nvidia-tribunal-experts') {
+          if (provider === 'groq') {
+            if (model === 'groq-tribunal-experts') {
               // ============================================================
-              // TRIBUNAL DE IAS - PASSO 1: O AUDITOR (Llama 3.3 70B)
+              // TRIBUNAL GROQ - PASSO 1: O AUDITOR (Llama 3.3 70B)
               // ============================================================
-              const resAuditor = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
+              const resAuditor = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
                 method: 'POST',
-                headers: nvidiaHeaders,
+                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  model: 'meta/llama-3.3-70b-instruct',
+                  model: 'llama-3.3-70b-versatile',
                   messages: [{ role: "user", content: promptFinal }],
-                  temperature: 0.2,
-                  max_tokens: 1500
+                  temperature: 0.2
                 })
               });
               if (!resAuditor.ok) throw new Error(`HTTP ${resAuditor.status} na Auditoria`);
@@ -640,7 +612,7 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
               const laudoProvisorio = jsonAuditor.choices?.[0]?.message?.content || "";
 
               // ============================================================
-              // TRIBUNAL DE IAS - PASSO 2: O JUIZ (Nemotron 70B)
+              // TRIBUNAL GROQ - PASSO 2: O JUIZ CRÍTICO (Llama 3.3 70B reavaliando)
               // ============================================================
               const promptJuiz = `Você é o Juiz de Qualidade Supremo da Brisanet. Sua única função é revisar o laudo técnico emitido por uma IA auditora e a transcrição original do atendimento, garantindo que o veredito final (Retido ou Cancelado) esteja 100% correto.
 
@@ -652,18 +624,17 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
 
               REGRAS CRÍTICAS DO JUIZ:
               1. Analise se o cliente aceitou de fato a proposta ou se ele apenas abandonou o chat após a oferta (abandono após oferta = CANCELADO).
-              2. Sua resposta final DEVE seguir estritamente a estrutura exigida pelo sistema da Brisanet, mas você tem o poder de alterar o DESFECHO e adicionar uma seção de "Revisão do Juiz" no HTML se notar que a IA Auditora errou ou foi leniente.
+              2. Sua resposta final DEVE seguir estritamente a estrutura exigida pelo sistema da Brisanet, adicionando uma seção <h4>Revisão do Juiz Supremo</h4> no HTML final para cravar o martelo.
 
               Escreva sua resposta exatamente no formato exigido pelo sistema, mantendo as duas primeiras linhas e o separador === antes do HTML final.`;
 
-              const resJuiz = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
+              const resJuiz = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
                 method: 'POST',
-                headers: nvidiaHeaders,
+                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                  model: 'llama-3.3-70b-versatile',
                   messages: [{ role: "user", content: promptJuiz }],
-                  temperature: 0.1,
-                  max_tokens: 2048
+                  temperature: 0.1
                 })
               });
               if (!resJuiz.ok) throw new Error(`HTTP ${resJuiz.status} no Juizado`);
@@ -671,22 +642,30 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
               iaResult = jsonJuiz.choices?.[0]?.message?.content || "";
 
             } else {
-              // FLUXO PADRÃO NVIDIA (Caso selecione apenas um modelo individual)
-              const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
-                method: 'POST',
-                headers: nvidiaHeaders,
-                body: JSON.stringify({ 
-                  model: model, 
-                  messages: [{ role: "user", content: promptFinal }], 
-                  temperature: 0.2, 
-                  max_tokens: 2048 
-                })
+              // Fluxo padrão unitário do Groq
+              const qRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST', 
+                headers: { 'Authorization': 'Bearer ' + apiKey.trim(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2 })
               });
-              if (!nRes.ok) throw new Error(`HTTP ${nRes.status}`);
-              const nJson = await nRes.json();
-              iaResult = nJson.choices?.[0]?.message?.content || "";
+              if (!qRes.ok) throw new Error(`HTTP ${qRes.status}`);
+              const qJson = await qRes.json();
+              iaResult = qJson.choices?.[0]?.message?.content || "";
             }
-         }
+          }
+          else if (provider === 'gemini') {
+            const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: promptFinal }] }] })
+            });
+            if (!gRes.ok) throw new Error(`HTTP ${gRes.status}`);
+            const gJson = await gRes.json();
+            iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          }
+          else {
+            throw new Error("Provedor não suportado ou desativado temporariamente.");
+          }
         } catch (e) {
           return res.status(200).json({ ok: false, erro: `Falha de comunicação com a IA (${provider}): ` + e.message });
         }
