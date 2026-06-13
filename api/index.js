@@ -483,12 +483,19 @@ export default async function handler(req, res) {
             iaResult = gJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
           }
           else if (provider === 'nvidia') {
-            const nRes = await fetch(`https://integrate.api.nvidia.com/v1/chat/completions`, {
+            // CORREÇÃO: URL unificada do catálogo de APIs da NVIDIA
+            const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+              headers: { 
+                'Authorization': `Bearer ${apiKey.trim()}`, 
+                'Content-Type': 'application/json' 
+              },
               body: JSON.stringify({
                 model: model,
-                messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+                messages: [
+                  { role: "system", content: systemPrompt }, 
+                  { role: "user", content: userPrompt }
+                ],
                 temperature: 0.1,
                 max_tokens: 2048
               })
@@ -497,7 +504,7 @@ export default async function handler(req, res) {
             const nJson = await nRes.json();
             if (nJson.error) throw new Error(nJson.error.message);
             iaResult = nJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
-          } 
+          }
           else {
             throw new Error("Provedor não suportado.");
           }
