@@ -612,16 +612,24 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
             const qJson = await qRes.json();
             iaResult = qJson.choices?.[0]?.message?.content || "";
           }
-          else if (provider === 'nvidia') {
+         else if (provider === 'nvidia') {
+            // Configuração de cabeçalhos robustos para evitar o "fetch failed" em HTTP/2
+            const nvidiaHeaders = { 
+              'Authorization': `Bearer ${apiKey.trim()}`, 
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CommandCenter/2.0'
+            };
+
             if (model === 'nvidia-tribunal-experts') {
               // ============================================================
               // TRIBUNAL DE IAS - PASSO 1: O AUDITOR (Llama 3.3 70B)
               // ============================================================
               const resAuditor = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                headers: nvidiaHeaders,
                 body: JSON.stringify({
-                  model: 'meta/llama-3.3-70b-instruct', // Alterado para o modelo sênior estável em 2026
+                  model: 'meta/llama-3.3-70b-instruct',
                   messages: [{ role: "user", content: promptFinal }],
                   temperature: 0.2,
                   max_tokens: 1500
@@ -650,11 +658,11 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
 
               const resJuiz = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
+                headers: nvidiaHeaders,
                 body: JSON.stringify({
                   model: 'nvidia/llama-3.1-nemotron-70b-instruct',
                   messages: [{ role: "user", content: promptJuiz }],
-                  temperature: 0.1, // Temperatura ultrabaixa para precisão metodológica
+                  temperature: 0.1,
                   max_tokens: 2048
                 })
               });
@@ -666,14 +674,18 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
               // FLUXO PADRÃO NVIDIA (Caso selecione apenas um modelo individual)
               const nRes = await fetch(`https://api.nvidia.com/v1/chat/completions`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: model, messages: [{ role: "user", content: promptFinal }], temperature: 0.2, max_tokens: 2048 })
+                headers: nvidiaHeaders,
+                body: JSON.stringify({ 
+                  model: model, 
+                  messages: [{ role: "user", content: promptFinal }], 
+                  temperature: 0.2, 
+                  max_tokens: 2048 
+                })
               });
               if (!nRes.ok) throw new Error(`HTTP ${nRes.status}`);
               const nJson = await nRes.json();
               iaResult = nJson.choices?.[0]?.message?.content || "";
             }
-          }
         } catch (e) {
           return res.status(200).json({ ok: false, erro: `Falha de comunicação com a IA (${provider}): ` + e.message });
         }
