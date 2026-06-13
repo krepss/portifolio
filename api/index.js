@@ -535,11 +535,10 @@ export default async function handler(req, res) {
       case 'buscarAgentesPorPausa': {
         const { groupId: bpGroupId, intervaloIso: bpIntervalo } = req.body;
 
-        // 1. Buscar TODAS as definições de presença
+        // 1. Buscar TODAS as definições de presença (paginado para achar as subpausas)
         const dicPresencasBP = {};
         let pPage = 1;
         let temMaisPresencas = true;
-        
         while (temMaisPresencas) {
           const resPres2 = await callGenesys(`/api/v2/presencedefinitions?pageSize=100&pageNumber=${pPage}`);
           if (resPres2.entities && resPres2.entities.length > 0) {
@@ -558,20 +557,17 @@ export default async function handler(req, res) {
           }
         }
 
-        // 2. Buscar TODOS os membros da equipe (com Paginação para equipes > 100 agentes)
-        let membros = [];
-        let tmPage = 1;
-        let tmHasMore = true;
-        
+        // 2. Buscar puramente os IDs dos membros da equipe
+        let membrosIds = [];
         if (bpGroupId) {
+          let tmPage = 1;
+          let tmHasMore = true;
           while (tmHasMore) {
-            const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100&pageNumber=${tmPage}&expand=entities`);
+            const dg2 = await callGenesys(`/api/v2/teams/${bpGroupId}/members?pageSize=100&pageNumber=${tmPage}`);
             if (dg2.entities && dg2.entities.length > 0) {
               dg2.entities.forEach(m => {
-                let userObj = m.user || m || {};
-                let id = userObj.id || m.id;
-                let nome = userObj.name || m.name || id;
-                if (id) membros.push({ id, nome });
+                let id = (m.user && m.user.id) || m.id;
+                if (id) membrosIds.push(id);
               });
               if (dg2.entities.length < 100) tmHasMore = false;
               else tmPage++;
@@ -580,30 +576,71 @@ export default async function handler(req, res) {
             }
           }
         }
-        
-        if (membros.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
+
+        // Remove duplicados caso a API da equipe oscile
+        membrosIds = [...new Set(membrosIds)];
+
+        if (membrosIds.length === 0) {
+            return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
+        }
+
+        // 3. Buscar nomes reais (usando a rota raiz de usuários, que é blindada contra falhas de escopo)
+        let membros = [];
+        for (let i = 0; i < membrosIds.length; i += 50) {
+          const chunkIds = membrosIds.slice(i, i + 50);
+          const qs = chunkIds.map(id => `id=${encodeURIComponent(id)}`).join('&');
+          const rUsers = await callGenesys(`/api/v2/users?pageSize=100&${qs}`);
+          if (rUsers.entities) {
+            rUsers.entities.forEach(u => {
+               if (u.id) membros.push({ id: u.id, nome: u.name || u.id });
+            });
+          } else {
+             // Fallback: se falhar, preserva o ID para não quebrar a tela
+             chunkIds.forEach(id => membros.push({ id, nome: id }));
+          }
+        }
 
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 3. Buscar timeline de presença (Fatiando em blocos de 50 para evitar erro de limite de predicados no Genesys)
+        // 4. Buscar timeline de presença (Fatiado e Paginado dentro do Analytics)
         let allUserDetails = [];
-        const chunkSize = 50; 
         
-        for (let i = 0; i < membros.length; i += chunkSize) {
-          const pedaco = membros.slice(i, i + chunkSize);
-          const payloadBP = {
-            "interval": bpIntervalo,
-            "userFilters": [{ "type": "or", "predicates": pedaco.map(m => ({ "dimension": "userId", "value": m.id })) }]
-          };
+        for (let i = 0; i < membros.length; i += 50) {
+          const chunkMembros = membros.slice(i, i + 50);
+          let pageNum = 1;
+          let hasMoreAnalytics = true;
           
-          const bpQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadBP);
-          if (!bpQuery.erro && bpQuery.userDetails) {
-            allUserDetails = allUserDetails.concat(bpQuery.userDetails);
+          while (hasMoreAnalytics) {
+            const payloadBP = {
+              "interval": bpIntervalo,
+              "paging": { "pageSize": 100, "pageNumber": pageNum },
+              "userFilters": [
+                {
+                  "type": "or",
+                  "predicates": chunkMembros.map(m => ({
+                    "type": "dimension",
+                    "dimension": "userId",
+                    "value": m.id
+                  }))
+                }
+              ]
+            };
+            
+            const bpQuery = await callGenesys('/api/v2/analytics/users/details/query', 'post', payloadBP);
+            
+            if (bpQuery.erro || !bpQuery.userDetails) {
+              hasMoreAnalytics = false; 
+            } else {
+              allUserDetails = allUserDetails.concat(bpQuery.userDetails);
+              // Se tiver mais de 100 registros de status no dia para esse bloco de agentes, vai para a página 2
+              if (bpQuery.userDetails.length < 100) hasMoreAnalytics = false;
+              else pageNum++;
+            }
           }
         }
 
-        // 4. Processar userDetails
+        // 5. Processar userDetails
         const pausaMap = {}; 
         const EXCLUIDOS_SYS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
 
@@ -613,12 +650,18 @@ export default async function handler(req, res) {
           (u.primaryPresence || []).forEach(pres => {
             if (EXCLUIDOS_SYS.has(pres.systemPresence)) return;
 
-            // CORREÇÃO: No Analytics, a subpausa vem em 'organizationPresenceId'
+            // Busca pelo ID da organização primeiro (Subpausas)
             let pDefId = pres.organizationPresenceId || pres.presenceDefinitionId;
             
-            const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
+            const traducoesPadrao = { 
+              "AWAY": "Ausente", 
+              "BREAK": "Pausa Auricular", 
+              "MEAL": "Refeição", 
+              "MEETING": "Reunião", 
+              "TRAINING": "Treinamento", 
+              "BUSY": "Ocupado" 
+            };
             
-            // Agora ele vai encontrar "Pausa Feedback", "Pausa Lanche", etc.
             let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
 
             const inicio = new Date(pres.startTime);
@@ -638,7 +681,7 @@ export default async function handler(req, res) {
           });
         });
 
-        // 5. Consolidar por agente dentro de cada tipo de pausa
+        // 6. Consolidar por agente
         const resultado = {};
         Object.keys(pausaMap).forEach(pausaNome => {
           const porAgente = {};
