@@ -427,14 +427,13 @@ export default async function handler(req, res) {
             cliente = "Não Identificado";
           }
         }
-
-        // Puxa operadores, constrói a lista de tabulações e mapeia comunicações digitais
+// Puxa operadores, constrói a lista de tabulações e mapeia comunicações digitais
         let nomesAgentes = [];
         let tabulacoesLista = [];
         let communicationIds = [];
 
         (cData.participants || []).forEach(p => {
-          // CORREÇÃO ESTILO CODE.GS: Captura IDs de chat/mensagem de QUALQUER participante da conversa
+          // Captura IDs de chat/mensagem de QUALQUER participante da conversa
           ['messages', 'chats'].forEach(media => {
             if (p[media] && Array.isArray(p[media])) {
               p[media].forEach(s => {
@@ -449,20 +448,32 @@ export default async function handler(req, res) {
             let agName = p.name || "Operador Desconhecido";
             if (!nomesAgentes.includes(agName)) nomesAgentes.push(agName);
             
+            // CORREÇÃO: Varredura profunda idêntica ao seu Code.gs para capturar o Wrapup
             let wName = "Sem Tabulação";
-            ['messages', 'chats'].forEach(media => {
-              if (p[media] && Array.isArray(p[media])) {
-                p[media].forEach(s => {
-                  (s.segments || []).forEach(sg => {
-                    if (sg.wrapUpCode) {
-                      wName = sg.wrapUpCode.startsWith("ININ-") 
-                        ? sg.wrapUpCode.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") 
-                        : sg.wrapUpCode;
-                    }
+            if (p.wrapup && p.wrapup.name) {
+              wName = p.wrapup.name;
+            } else if (p.wrapup && p.wrapup.code) {
+              wName = p.wrapup.code.startsWith("ININ-") 
+                ? p.wrapup.code.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") 
+                : p.wrapup.code;
+            } else {
+              // Fallback profundo varrendo todas as mídias possíveis do participante
+              let foundWrapup = false;
+              ['sessions', 'calls', 'chats', 'messages', 'emails'].forEach(media => {
+                if (p[media] && Array.isArray(p[media]) && !foundWrapup) {
+                  p[media].forEach(s => {
+                    (s.segments || []).forEach(sg => {
+                      if (sg.wrapUpCode && !foundWrapup) {
+                        wName = sg.wrapUpCode.startsWith("ININ-") 
+                          ? sg.wrapUpCode.replace("ININ-WRAP-UP-", "").replace("ININ-OUTBOUND-", "") 
+                          : sg.wrapUpCode;
+                        foundWrapup = true;
+                      }
+                    });
                   });
-                });
-              }
-            });
+                }
+              });
+            }
             tabulacoesLista.push(`<b>${agName}:</b> ${wName}`);
           }
         });
