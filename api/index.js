@@ -603,7 +603,7 @@ export default async function handler(req, res) {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 4. Buscar timeline de presença (Fatiado e Paginado dentro do Analytics)
+       // 4. Buscar timeline de presença (Fatiado e Paginado dentro do Analytics)
         let allUserDetails = [];
         
         for (let i = 0; i < membros.length; i += 50) {
@@ -612,17 +612,27 @@ export default async function handler(req, res) {
           let hasMoreAnalytics = true;
           
           while (hasMoreAnalytics) {
+            // Cria os predicados com os IDs dos agentes do bloco atual
+            const userPredicates = chunkMembros.map(m => ({
+              "type": "dimension",
+              "dimension": "userId",
+              "value": m.id
+            }));
+
             const payloadBP = {
               "interval": bpIntervalo,
               "paging": { "pageSize": 100, "pageNumber": pageNum },
               "userFilters": [
                 {
                   "type": "or",
-                  "predicates": chunkMembros.map(m => ({
-                    "type": "dimension",
-                    "dimension": "userId",
-                    "value": m.id
-                  }))
+                  "predicates": userPredicates
+                }
+              ],
+              // A CORREÇÃO ESTÁ AQUI: Obriga o Genesys a ler o banco de dados de Presença
+              "presenceFilters": [
+                {
+                  "type": "or",
+                  "predicates": userPredicates
                 }
               ]
             };
@@ -633,7 +643,7 @@ export default async function handler(req, res) {
               hasMoreAnalytics = false; 
             } else {
               allUserDetails = allUserDetails.concat(bpQuery.userDetails);
-              // Se tiver mais de 100 registros de status no dia para esse bloco de agentes, vai para a página 2
+              // Avança a página se o bloco trouxer 100 registros preenchidos
               if (bpQuery.userDetails.length < 100) hasMoreAnalytics = false;
               else pageNum++;
             }
