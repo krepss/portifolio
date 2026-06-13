@@ -477,8 +477,8 @@ export default async function handler(req, res) {
                     transcritosObj.transcripts.forEach(t => {
                       if (t.phrases && Array.isArray(t.phrases)) {
                         t.phrases.forEach(phrase => frasesBrutas.push(phrase));
-                      });
-                    }
+                      }
+                    });
                   }
                 }
               }
@@ -515,7 +515,7 @@ export default async function handler(req, res) {
         let instrucoesDinamicas = customPrompt && customPrompt.trim() !== "" 
           ? customPrompt.trim() 
           : `1. Resumo do Caso: O que o cliente solicitou e qual foi o motivo real do cancelamento/insatisfação alegado?
-2. Tratativa de Retenção: O(s) Operador(es) Humano(s) aplicou(ram) técnicas para reter o cliente? IMPORTANTE: O sistema/URA não realiza ofertas nem retém clientes. Foque a avaliação apenas na postura dos operadores humanos.
+2. Tratativa de Retenção: O(s) Operador(es) Humano(s) aplicou(ram) techniques para reter o cliente? IMPORTANTE: O sistema/URA não realiza ofertas nem retém clientes. Foque a avaliação apenas na postura dos operadores humanos.
 3. Tabulação: As tabulações aplicadas refletem corretamente o desfecho da conversa?
 4. Feedback da IA: Apresente sua visão analítica. É um atendimento aprovado, passível de feedback ou crítico?`;
 
@@ -577,7 +577,7 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
 
         // 5. Parser de Cabeçalho Estruturado (Portado e Otimizado do seu Code.gs)
         iaResult = iaResult.replace(/```html/g, '').replace(/```/g, '').trim();
-        iaResult = iaResult.replace(/\*\*(CLIENTE:|DESFECHO:)\*\/gi, '$1').replace(/\*(CLIENTE:|DESFECHO:)\*/gi, '$1');
+        iaResult = iaResult.replace(/\*\*(CLIENTE:|DESFECHO:)\*\*/gi, '$1').replace(/\*(CLIENTE:|DESFECHO:)\*/gi, '$1');
 
         let nomeClienteFinal = cliente;
         let htmlFinal = iaResult;
