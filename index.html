@@ -1327,16 +1327,11 @@ function updateModelsIA() {
   var sel  = document.getElementById('ia-model');
   sel.innerHTML = '';
   if (prov === 'groq') {
-    sel.add(new Option('Llama 3.3 70B','llama-3.3-70b-versatile'));
-    sel.add(new Option('Llama 3.1 8B', 'llama-3.1-8b-instant'));
+    sel.add(new Option('⚖️ Combo: Tribunal de IAs (Dupla Checagem Groq)', 'groq-tribunal-experts'));
+    sel.add(new Option('Llama 3.3 70B (Versátil)','llama-3.3-70b-versatile'));
+    sel.add(new Option('Llama 3.1 8B (Instantâneo)', 'llama-3.1-8b-instant'));
   } else if (prov === 'gemini') {
     sel.add(new Option('Gemini 2.5 Flash','gemini-2.5-flash'));
-    sel.add(new Option('Gemini 3.5 Flash','gemini-3.5-flash'));
-  } else if (prov === 'nvidia') {
-    sel.add(new Option('⚖️ Combo: Tribunal de IAs (Dupla Checagem)', 'nvidia-tribunal-experts'));
-    sel.add(new Option('Llama 3.1 405B Instruct', 'meta/llama-3.1-405b-instruct'));
-    sel.add(new Option('Llama 3.1 70B Instruct', 'meta/llama-3.1-70b-instruct'));
-    sel.add(new Option('Nemotron 70B', 'nvidia/llama-3.1-nemotron-70b-instruct'));
   }
   var saved = localStorage.getItem('bn_ia_model');
   if (saved) { var opt = Array.from(sel.options).find(function(o){ return o.value === saved; }); if(opt) sel.value = saved; }
@@ -1347,16 +1342,11 @@ function updateModelsLoteIA() {
   var sel  = document.getElementById('lote-model');
   sel.innerHTML = '';
   if (prov === 'groq') {
-    sel.add(new Option('Llama 3.3 70B','llama-3.3-70b-versatile'));
-    sel.add(new Option('Llama 3.1 8B', 'llama-3.1-8b-instant'));
+    sel.add(new Option('⚖️ Combo: Tribunal de IAs (Dupla Checagem Groq)', 'groq-tribunal-experts'));
+    sel.add(new Option('Llama 3.3 70B (Versátil)','llama-3.3-70b-versatile'));
+    sel.add(new Option('Llama 3.1 8B (Instantâneo)', 'llama-3.1-8b-instant'));
   } else if (prov === 'gemini') {
     sel.add(new Option('Gemini 2.5 Flash','gemini-2.5-flash'));
-    sel.add(new Option('Gemini 3.5 Flash','gemini-3.5-flash'));
-  } else if (prov === 'nvidia') {
-    sel.add(new Option('⚖️ Combo: Tribunal de IAs (Dupla Checagem)', 'nvidia-tribunal-experts'));
-    sel.add(new Option('Llama 3.1 405B Instruct', 'meta/llama-3.1-405b-instruct'));
-    sel.add(new Option('Llama 3.1 70B Instruct', 'meta/llama-3.1-70b-instruct'));
-    sel.add(new Option('Nemotron 70B', 'nvidia/llama-3.1-nemotron-70b-instruct'));
   }
 }
 
