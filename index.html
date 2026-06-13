@@ -574,7 +574,6 @@ tbody tr:hover td { background: var(--bg); }
     </div>
 
     <div id="aba-pausas-wfm" class="aba-conteudo">
-      <!-- BARRA DE CONTROLES -->
       <div class="control-bar" style="background: var(--laranja-bg); border-color: var(--laranja-bd);">
         <div class="cb-item">
           <label style="color: var(--laranja);">Equipe / Grupo</label>
@@ -610,56 +609,48 @@ tbody tr:hover td { background: var(--bg); }
         <button class="btn btn-primary" style="background: var(--laranja); font-weight: 800; padding: 10px 22px; font-size:14px;" onclick="acionarWFMUnificado()">⏱ Carregar Pausas</button>
       </div>
 
-      <!-- VISÃO UNIFICADA WFM -->
       <div class="wfm-secao" style="margin-bottom:0;">
 
-        <!-- HEADER -->
         <div class="wfm-secao-header">
           <div class="wfm-secao-titulo">
             <span class="wfm-secao-ico">⏱</span>
             <div>
               <div class="wfm-secao-nome">Auditoria de Pausas WFM — Visão por Equipe</div>
-              <div class="wfm-secao-desc">Selecione um tipo de pausa para ver o tempo de cada agente. Agentes sem uso aparecem zerados.</div>
+              <div class="wfm-secao-desc">Consolidado completo de pausas. Clique em "Ver Pausas" para detalhar a cronologia do agente.</div>
             </div>
           </div>
           <button class="wfm-btn-csv" onclick="exportarWFMcsv()" style="display:none;" id="wfm-btn-csv-export">📥 Exportar CSV</button>
         </div>
 
-        <!-- LOADING -->
         <div id="wfm-loading" class="wfm-inner-loading" style="display:none">
           <div class="big-spin" style="border-top-color:var(--laranja); width:26px; height:26px;"></div>
           <span>Consultando timeline de pausas da equipe...</span>
         </div>
 
-        <!-- VAZIO / INSTRUÇÃO INICIAL -->
         <div id="wfm-vazio" class="wfm-inner-vazio">
           <div class="wfm-inner-ico">⏱</div>
           <div class="wfm-inner-titulo">Nenhum dado carregado</div>
           <div class="wfm-inner-sub">Escolha uma equipe e período nos filtros acima, depois clique em "Carregar Pausas".</div>
         </div>
 
-        <!-- CONTEÚDO PRINCIPAL -->
         <div id="wfm-conteudo" style="display:none; flex-direction:column; gap:0;">
 
-          <!-- CHIPS DE SELEÇÃO DE PAUSA -->
-          <div style="padding: 16px 24px 0 24px;">
+          <div style="padding: 16px 24px 0 24px; display: none;">
             <div class="wfm-sub-label">Tipos de pausa encontradas — clique para filtrar a tabela abaixo</div>
             <div class="pbp-filtros" id="wfm-chips" style="margin-bottom:12px;"></div>
           </div>
 
-          <!-- BARRA DE BUSCA E INFO -->
-          <div class="wfm-barra-resultado" style="padding: 0 24px 14px 24px;">
+          <div class="wfm-barra-resultado" style="padding: 14px 24px 14px 24px;">
             <div id="wfm-info-pausa" class="wfm-resultado-info"></div>
             <input type="text" id="wfm-busca-agente" placeholder="🔍 Filtrar por agente..." class="wfm-busca-input" oninput="filtrarTabelaWFM()">
           </div>
 
-          <!-- TABELA UNIFICADA DE AGENTES -->
           <div class="tab-scroll">
             <table style="width:100%;" id="wfm-tabela-agentes">
               <thead>
                 <tr>
                   <th style="padding:10px 24px; text-align:left;">Agente</th>
-                  <th style="padding:10px 16px; text-align:center;">Ocorrências</th>
+                  <th style="padding:10px 16px; text-align:center;">Ocorrências Totais</th>
                   <th style="padding:10px 16px; text-align:center;">Tempo Total</th>
                   <th style="padding:10px 16px; text-align:center;">Registros</th>
                 </tr>
@@ -671,7 +662,6 @@ tbody tr:hover td { background: var(--bg); }
         </div>
       </div>
 
-      <!-- Manter IDs legados invisíveis para compatibilidade com pbp-* usados em outras partes -->
       <div id="pbp-loading" style="display:none"></div>
       <div id="pbp-vazio" style="display:none"></div>
       <div id="pbp-conteudo" style="display:none">
@@ -1571,7 +1561,6 @@ function fmtT(s) {
 }
 
 function esc(s) {
-  // CORREÇÃO: Adicionado o replace de aspas simples (\') para &#39;
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
@@ -1596,8 +1585,8 @@ function dlCSV(rows, nome) {
 // ══════════════════════════════════════════════════════════════
 //  AUDITORIA WFM — VISÃO UNIFICADA
 // ══════════════════════════════════════════════════════════════
-var _wfmDadosUnificados  = {};   // { pausaNome: [ {userId, nome, ocorrencias, totalMin, registros} ] }
-var _wfmListaAgentes     = [];   // [ { id, nome } ] — todos os agentes da equipe
+var _wfmDadosUnificados  = {};
+var _wfmListaAgentes     = [];
 var _wfmPausaSelecionada = null;
 var _wfmPausasDisponiveis = [];
 
@@ -1625,16 +1614,12 @@ function acionarWFMUnificado() {
       _wfmPausasDisponiveis = r.pausas     || [];
       _wfmPausaSelecionada  = null;
 
-      // A API já retorna a lista completa de membros da equipe em r.membros
-      // Agrupa também quem apareceu em pausas mas não está na lista (segurança)
       var agenteMap = {};
 
-      // 1. Membros confirmados da equipe (sem pausa no período aparecem zerados)
       (r.membros || []).forEach(function(m) {
         if (m.id) agenteMap[m.id] = m.nome || m.id;
       });
 
-      // 2. Quem apareceu em alguma pausa mas não estava na lista de membros
       _wfmPausasDisponiveis.forEach(function(p) {
         (_wfmDadosUnificados[p] || []).forEach(function(ag) {
           if (ag.userId && !agenteMap[ag.userId]) agenteMap[ag.userId] = ag.nome || ag.userId;
@@ -1655,7 +1640,6 @@ function acionarWFMUnificado() {
 }
 
 function renderWFMUnificado() {
-  // 1. Oculta a área de seleção de chips (não precisamos mais dela, pois veremos todas as pausas)
   var containerChips = document.getElementById('wfm-chips');
   if (containerChips && containerChips.parentElement) {
     containerChips.parentElement.style.display = 'none';
@@ -1664,15 +1648,12 @@ function renderWFMUnificado() {
   document.getElementById('wfm-conteudo').style.display = 'flex';
   document.getElementById('wfm-btn-csv-export').style.display = 'inline-block';
 
-  // 2. Consolidar TODAS as pausas por agente
   var consolidados = {};
 
-  // Inicializa o objeto com toda a equipe (mesmo quem não teve pausa)
   _wfmListaAgentes.forEach(function(ag) {
     consolidados[ag.id] = { id: ag.id, nome: ag.nome, ocorrencias: 0, totalMin: 0, detalhes: [] };
   });
 
-  // Varre os dados do Genesys e agrupa tudo dentro de cada agente
   _wfmPausasDisponiveis.forEach(function(nomePausa) {
     var agentesNaPausa = _wfmDadosUnificados[nomePausa] || [];
     agentesNaPausa.forEach(function(agData) {
@@ -1695,40 +1676,13 @@ function renderWFMUnificado() {
     });
   });
 
-  // 3. Converte em array e ordena por ordem alfabética
   var arrayAgentes = Object.values(consolidados).sort(function(a, b) {
     return a.nome.localeCompare(b.nome, 'pt-BR');
   });
 
   document.getElementById('wfm-info-pausa').innerHTML = 'Mostrando <strong>' + arrayAgentes.length + '</strong> agente(s) da equipe com todas as pausas.';
 
-  // 4. Renderiza a nova tabela unificada
   renderTabelaWFMAgentes(arrayAgentes);
-}
-
-function selecionarPausaWFM(nomePausa) {
-  _wfmPausaSelecionada = nomePausa;
-
-  // Atualiza chips ativos
-  document.querySelectorAll('#wfm-chips .pbp-chip').forEach(function(c) { c.classList.remove('ativo'); });
-  _wfmPausasDisponiveis.forEach(function(p) {
-    if (p === nomePausa) {
-      var chipId = 'wfm-chip-' + btoa(unescape(encodeURIComponent(p))).replace(/[^a-zA-Z0-9]/g,'');
-      var el = document.getElementById(chipId);
-      if (el) el.classList.add('ativo');
-    }
-  });
-
-  var agComPausa = _wfmDadosUnificados[nomePausa] || [];
-  var total = _wfmListaAgentes.length;
-  var comUso = agComPausa.length;
-
-  document.getElementById('wfm-info-pausa').innerHTML =
-    'Pausa: <strong>' + esc(nomePausa) + '</strong> &mdash; ' +
-    '<span style="color:var(--laranja);font-weight:700">' + comUso + '</span> de ' + total + ' agente(s) utilizaram no período';
-  document.getElementById('wfm-busca-agente').value = '';
-
-  renderTabelaWFM(nomePausa);
 }
 
 function renderTabelaWFMAgentes(arrayAgentes) {
@@ -1751,7 +1705,6 @@ function renderTabelaWFMAgentes(arrayAgentes) {
       detToggle = '<span style="color:var(--text-sm);font-size:12px;">—</span>';
     }
 
-    // Linha Mestre do Agente
     html += '<tr style="' + (temPausa ? '' : 'opacity:0.55;') + '" data-nome="' + esc(ag.nome.toLowerCase()) + '">';
     html += '<td style="padding:10px 24px; font-weight:' + (temPausa ? '700' : '400') + '; color:var(--navy);">👤 ' + esc(ag.nome) + '</td>';
     html += '<td style="text-align:center; padding:10px 16px;">' + (temPausa ? '<span class="num-badge">' + ag.ocorrencias + '</span>' : '<span style="color:var(--text-sm);font-size:12px;">0</span>') + '</td>';
@@ -1759,7 +1712,6 @@ function renderTabelaWFMAgentes(arrayAgentes) {
     html += '<td style="text-align:center; padding:10px 16px;">' + detToggle + '</td>';
     html += '</tr>';
 
-    // Sub-tabela expansível com o Histórico completo
     if (temPausa) {
       html += '<tr id="' + rowId + '" style="display:none; background:#F8FAFC;">';
       html += '<td colspan="4" style="padding:12px 24px 16px 24px; border-bottom:2px solid var(--border);">';
@@ -1772,7 +1724,6 @@ function renderTabelaWFMAgentes(arrayAgentes) {
       html += '<th style="font-size:10px;padding:7px 14px;text-align:center;">Duração</th>';
       html += '</tr></thead><tbody>';
 
-      // Mostra as pausas misturadas, exatamente como ocorreram
       ag.detalhes.forEach(function(r) {
         html += '<tr>';
         html += '<td style="padding:7px 14px;font-size:12px;font-weight:700;color:var(--laranja);">' + esc(r.pausa) + '</td>';
@@ -1793,7 +1744,7 @@ function toggleDetalhesWFM(rowId, btn) {
   if (!row) return;
   var aberto = row.style.display !== 'none';
   row.style.display = aberto ? 'none' : 'table-row';
-  if (btn) btn.textContent = aberto ? '👁 Ver' : '▲ Fechar';
+  if (btn) btn.textContent = aberto ? '👁 Ver Pausas' : '▲ Fechar';
 }
 
 function filtrarTabelaWFM() {
@@ -1801,7 +1752,6 @@ function filtrarTabelaWFM() {
   document.querySelectorAll('#wfm-tbody tr[data-nome]').forEach(function(row) {
     var nome = row.getAttribute('data-nome') || '';
     row.style.display = (!termo || nome.indexOf(termo) > -1) ? '' : 'none';
-    // Fecha linha de detalhe se o agente for filtrado
     if (termo && nome.indexOf(termo) === -1) {
       var nextRow = row.nextElementSibling;
       if (nextRow && !nextRow.hasAttribute('data-nome')) nextRow.style.display = 'none';
@@ -1844,7 +1794,7 @@ function exportarWFMcsv() {
 function acionarAuditoriaPausas()     { acionarWFMUnificado(); }
 function acionarDashAgentsPorPausa()  { acionarWFMUnificado(); }
 function renderAuditoriaPausas()      {}
-function selecionarPausaPBP(n)        { selecionarPausaWFM(n); }
+function selecionarPausaPBP(n)        {}
 function filtrarCardsPBP()            { filtrarTabelaWFM(); }
 function exportarPBPcsv()             { exportarWFMcsv(); }
 function toggleDetalhamentoLinha(i)   {}
