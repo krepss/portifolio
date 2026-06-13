@@ -401,10 +401,37 @@ export default async function handler(req, res) {
 
       case 'buscarConversasParaLote': {
         const { queueId, wrapupId, intervaloIso, limite } = req.body;
-        const preds = [{ "dimension": "queueId", "value": queueId }, { "dimension": "mediaType", "value": "message" }];
+        
+        // Predicados base: Filtra pela fila alvo
+        const preds = [{ "dimension": "queueId", "value": queueId }];
+        
+        // Se o usuário filtrou por uma tabulação específica na tela, adicionamos o filtro
         if (wrapupId) preds.push({ "dimension": "wrapUpCode", "value": wrapupId });
-        const data = await callGenesys('/api/v2/analytics/conversations/details/query', 'post', { "interval": intervaloIso, "segmentFilters": [{ "type": "and", "predicates": preds }], "paging": { "pageSize": parseInt(limite) || 10, "pageNumber": 1 } });
-        return res.status(200).json({ ok: true, ids: (data.conversations || []).map(c => c.conversationId) });
+
+        const payload = { 
+          "interval": intervaloIso, 
+          "segmentFilters": [{ 
+            "type": "and", 
+            "predicates": preds 
+          }],
+          // Filtro de conversas: Pega interações digitais (Chat ou Message)
+          "conversationFilters": [{
+            "type": "or",
+            "predicates": [
+              { "dimension": "mediaType", "value": "message" },
+              { "dimension": "mediaType", "value": "chat" }
+            ]
+          }],
+          "paging": { 
+            "pageSize": parseInt(limite) || 10, 
+            "pageNumber": 1 
+          } 
+        };
+
+        const data = await callGenesys('/api/v2/analytics/conversations/details/query', 'post', payload);
+        const ids = (data.conversations || []).map(c => c.conversationId);
+        
+        return res.status(200).json({ ok: true, ids: ids });
       }
 
       case 'processarAuditoriaIA': {
