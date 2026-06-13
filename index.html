@@ -1655,31 +1655,55 @@ function acionarWFMUnificado() {
 }
 
 function renderWFMUnificado() {
-  if (!_wfmPausasDisponiveis.length && !_wfmListaAgentes.length) {
-    document.getElementById('wfm-vazio').style.display = 'block';
-    document.getElementById('wfm-vazio').innerHTML = '<div class="wfm-inner-ico">✅</div><div class="wfm-inner-titulo">Nenhuma pausa registrada no período</div><div class="wfm-inner-sub">A equipe não utilizou pausas no intervalo selecionado.</div>';
-    return;
+  // 1. Oculta a área de seleção de chips (não precisamos mais dela, pois veremos todas as pausas)
+  var containerChips = document.getElementById('wfm-chips');
+  if (containerChips && containerChips.parentElement) {
+    containerChips.parentElement.style.display = 'none';
   }
 
-  // Renderiza chips de tipo de pausa
-  var chipsHtml = '';
-  _wfmPausasDisponiveis.forEach(function(p) {
-    var count = (_wfmDadosUnificados[p] || []).length;
-    var chipId = 'wfm-chip-' + btoa(unescape(encodeURIComponent(p))).replace(/[^a-zA-Z0-9]/g,'');
-    chipsHtml += '<button class="pbp-chip" id="' + chipId + '" onclick="selecionarPausaWFM(\'' + esc(p) + '\')">' +
-      esc(p) + '<span class="pbp-count">' + count + '</span></button>';
-  });
-  document.getElementById('wfm-chips').innerHTML = chipsHtml;
   document.getElementById('wfm-conteudo').style.display = 'flex';
   document.getElementById('wfm-btn-csv-export').style.display = 'inline-block';
 
-  // Auto-seleciona a primeira pausa
-  if (_wfmPausasDisponiveis.length) {
-    selecionarPausaWFM(_wfmPausasDisponiveis[0]);
-  } else {
-    document.getElementById('wfm-info-pausa').textContent = _wfmListaAgentes.length + ' agente(s) na equipe';
-    renderTabelaWFM(null);
-  }
+  // 2. Consolidar TODAS as pausas por agente
+  var consolidados = {};
+
+  // Inicializa o objeto com toda a equipe (mesmo quem não teve pausa)
+  _wfmListaAgentes.forEach(function(ag) {
+    consolidados[ag.id] = { id: ag.id, nome: ag.nome, ocorrencias: 0, totalMin: 0, detalhes: [] };
+  });
+
+  // Varre os dados do Genesys e agrupa tudo dentro de cada agente
+  _wfmPausasDisponiveis.forEach(function(nomePausa) {
+    var agentesNaPausa = _wfmDadosUnificados[nomePausa] || [];
+    agentesNaPausa.forEach(function(agData) {
+      if (!consolidados[agData.userId]) {
+        consolidados[agData.userId] = { id: agData.userId, nome: agData.nome, ocorrencias: 0, totalMin: 0, detalhes: [] };
+        _wfmListaAgentes.push({ id: agData.userId, nome: agData.nome });
+      }
+
+      consolidados[agData.userId].ocorrencias += agData.ocorrencias;
+      consolidados[agData.userId].totalMin += agData.totalMin;
+
+      agData.registros.forEach(function(r) {
+        consolidados[agData.userId].detalhes.push({
+          pausa: nomePausa,
+          inicio: r.inicio,
+          fim: r.fim,
+          duracaoMin: r.duracaoMin
+        });
+      });
+    });
+  });
+
+  // 3. Converte em array e ordena por ordem alfabética
+  var arrayAgentes = Object.values(consolidados).sort(function(a, b) {
+    return a.nome.localeCompare(b.nome, 'pt-BR');
+  });
+
+  document.getElementById('wfm-info-pausa').innerHTML = 'Mostrando <strong>' + arrayAgentes.length + '</strong> agente(s) da equipe com todas as pausas.';
+
+  // 4. Renderiza a nova tabela unificada
+  renderTabelaWFMAgentes(arrayAgentes);
 }
 
 function selecionarPausaWFM(nomePausa) {
@@ -1707,59 +1731,51 @@ function selecionarPausaWFM(nomePausa) {
   renderTabelaWFM(nomePausa);
 }
 
-function renderTabelaWFM(nomePausa) {
-  var agComPausa = nomePausa ? (_wfmDadosUnificados[nomePausa] || []) : [];
-  // Indexa agentes com pausa pelo ID para lookup rápido
-  var indexPausa = {};
-  agComPausa.forEach(function(ag) { indexPausa[ag.userId] = ag; });
-
+function renderTabelaWFMAgentes(arrayAgentes) {
   var html = '';
-  _wfmListaAgentes.forEach(function(ag, idx) {
-    var dados    = indexPausa[ag.id];
-    var temPausa = !!dados;
-    var ocorr    = temPausa ? dados.ocorrencias : 0;
-    var totalMin = temPausa ? dados.totalMin    : 0;
-    var horas    = Math.floor(totalMin / 60);
-    var mins     = totalMin % 60;
-    var tempoFmt = totalMin === 0 ? '<span style="color:var(--text-sm)">—</span>'
-                 : (horas > 0 ? horas + 'h ' + String(mins).padStart(2,'0') + 'm' : mins + 'min');
 
-    var corLinha = temPausa ? '' : 'color:var(--text-sm);';
-    var rowId    = 'wfm-row-detail-' + idx;
+  arrayAgentes.forEach(function(ag, idx) {
+    var temPausa = ag.ocorrencias > 0;
+    var horas = Math.floor(ag.totalMin / 60);
+    var mins  = ag.totalMin % 60;
+    var tempoFmt = ag.totalMin === 0
+        ? '<span style="color:var(--text-sm)">—</span>'
+        : (horas > 0 ? horas + 'h ' + String(mins).padStart(2,'0') + 'm' : mins + 'min');
+
+    var rowId = 'wfm-row-detail-' + idx;
     var detToggle = '';
 
-    if (temPausa && dados.registros && dados.registros.length) {
-      detToggle = '<button class="btn-tb" style="border-color:var(--laranja);color:var(--laranja);font-size:11px;font-weight:700;padding:4px 10px;" ' +
-        'onclick="toggleDetalhesWFM(\'' + rowId + '\',this)">👁 Ver</button>';
+    if (temPausa) {
+      detToggle = '<button class="btn-tb" style="border-color:var(--laranja);color:var(--laranja);font-size:11px;font-weight:700;padding:4px 10px;" onclick="toggleDetalhesWFM(\'' + rowId + '\',this)">👁 Ver Pausas</button>';
+    } else {
+      detToggle = '<span style="color:var(--text-sm);font-size:12px;">—</span>';
     }
 
+    // Linha Mestre do Agente
     html += '<tr style="' + (temPausa ? '' : 'opacity:0.55;') + '" data-nome="' + esc(ag.nome.toLowerCase()) + '">';
-    html += '<td style="padding:10px 24px; font-weight:' + (temPausa ? '700' : '400') + '; color:var(--navy);">';
-    html += '👤 ' + esc(ag.nome) + '</td>';
-    html += '<td style="text-align:center; padding:10px 16px;">';
-    if (ocorr > 0) {
-      html += '<span class="num-badge">' + ocorr + '</span>';
-    } else {
-      html += '<span style="color:var(--text-sm);font-size:12px;">0</span>';
-    }
-    html += '</td>';
+    html += '<td style="padding:10px 24px; font-weight:' + (temPausa ? '700' : '400') + '; color:var(--navy);">👤 ' + esc(ag.nome) + '</td>';
+    html += '<td style="text-align:center; padding:10px 16px;">' + (temPausa ? '<span class="num-badge">' + ag.ocorrencias + '</span>' : '<span style="color:var(--text-sm);font-size:12px;">0</span>') + '</td>';
     html += '<td style="text-align:center; padding:10px 16px; font-weight:700; font-size:14px;">' + tempoFmt + '</td>';
-    html += '<td style="text-align:center; padding:10px 16px;">' + (detToggle || '<span style="color:var(--text-sm);font-size:12px;">—</span>') + '</td>';
+    html += '<td style="text-align:center; padding:10px 16px;">' + detToggle + '</td>';
     html += '</tr>';
 
-    // Linha de detalhamento expandível
-    if (temPausa && dados.registros && dados.registros.length) {
+    // Sub-tabela expansível com o Histórico completo
+    if (temPausa) {
       html += '<tr id="' + rowId + '" style="display:none; background:#F8FAFC;">';
       html += '<td colspan="4" style="padding:12px 24px 16px 24px; border-bottom:2px solid var(--border);">';
-      html += '<div style="font-size:11px;font-weight:700;color:var(--text-sm);text-transform:uppercase;margin-bottom:8px;letter-spacing:0.5px;">⏳ Registros de ' + esc(nomePausa) + ' — ' + esc(ag.nome) + '</div>';
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text-sm);text-transform:uppercase;margin-bottom:8px;letter-spacing:0.5px;">⏳ Histórico Completo de Pausas — ' + esc(ag.nome) + '</div>';
       html += '<table style="width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;">';
       html += '<thead style="background:var(--bg)"><tr>';
+      html += '<th style="font-size:10px;padding:7px 14px;text-align:left;">Tipo de Pausa</th>';
       html += '<th style="font-size:10px;padding:7px 14px;text-align:left;">Entrada</th>';
       html += '<th style="font-size:10px;padding:7px 14px;text-align:left;">Saída</th>';
       html += '<th style="font-size:10px;padding:7px 14px;text-align:center;">Duração</th>';
       html += '</tr></thead><tbody>';
-      dados.registros.forEach(function(r) {
+
+      // Mostra as pausas misturadas, exatamente como ocorreram
+      ag.detalhes.forEach(function(r) {
         html += '<tr>';
+        html += '<td style="padding:7px 14px;font-size:12px;font-weight:700;color:var(--laranja);">' + esc(r.pausa) + '</td>';
         html += '<td style="padding:7px 14px;font-size:12px;color:var(--text-md);">' + esc(r.inicio) + '</td>';
         html += '<td style="padding:7px 14px;font-size:12px;color:var(--text-md);">' + esc(r.fim) + '</td>';
         html += '<td style="padding:7px 14px;text-align:center;font-weight:700;font-size:13px;">' + r.duracaoMin + ' min</td>';
@@ -1794,23 +1810,33 @@ function filtrarTabelaWFM() {
 }
 
 function exportarWFMcsv() {
-  if (!_wfmPausaSelecionada) return showToast('Selecione uma pausa antes de exportar.');
-  var rows = [['Pausa','Agente','Ocorrências','Tempo Total (min)','Entrada','Saída','Duração (min)']];
-  var agComPausa = _wfmDadosUnificados[_wfmPausaSelecionada] || [];
-  var indexPausa = {};
-  agComPausa.forEach(function(ag) { indexPausa[ag.userId] = ag; });
+  var rows = [['Agente', 'Tipo de Pausa', 'Entrada', 'Saída', 'Duração (min)']];
 
-  _wfmListaAgentes.forEach(function(ag) {
-    var dados = indexPausa[ag.id];
-    if (!dados) {
-      rows.push([_wfmPausaSelecionada, ag.nome, 0, 0, '', '', '']);
+  var consolidados = {};
+  _wfmListaAgentes.forEach(function(ag) { consolidados[ag.id] = { nome: ag.nome, detalhes: [] }; });
+
+  _wfmPausasDisponiveis.forEach(function(nomePausa) {
+    (_wfmDadosUnificados[nomePausa] || []).forEach(function(agData) {
+       if (!consolidados[agData.userId]) consolidados[agData.userId] = { nome: agData.nome, detalhes: [] };
+       agData.registros.forEach(function(r) {
+         consolidados[agData.userId].detalhes.push({ pausa: nomePausa, inicio: r.inicio, fim: r.fim, duracaoMin: r.duracaoMin });
+       });
+    });
+  });
+
+  var agentesArray = Object.values(consolidados).sort(function(a, b) { return a.nome.localeCompare(b.nome, 'pt-BR'); });
+
+  agentesArray.forEach(function(ag) {
+    if (ag.detalhes.length === 0) {
+      rows.push([ag.nome, 'Sem pausas', '', '', '0']);
     } else {
-      (dados.registros || []).forEach(function(r) {
-        rows.push([_wfmPausaSelecionada, ag.nome, dados.ocorrencias, dados.totalMin, r.inicio, r.fim, r.duracaoMin]);
+      ag.detalhes.forEach(function(r) {
+        rows.push([ag.nome, r.pausa, r.inicio, r.fim, r.duracaoMin]);
       });
     }
   });
-  dlCSV(rows, 'WFM_Pausas_' + _wfmPausaSelecionada.replace(/\s+/g,'_') + '.csv');
+
+  dlCSV(rows, 'Dashboard_Completo_Pausas.csv');
 }
 
 // Stubs de compatibilidade — as funções antigas não são mais acionadas pela UI desta aba,
