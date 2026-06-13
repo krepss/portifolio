@@ -686,6 +686,7 @@ Em seguida, coloque exatamente três sinais de igual em uma linha separada:
               const nJson = await nRes.json();
               iaResult = nJson.choices?.[0]?.message?.content || "";
             }
+         }
         } catch (e) {
           return res.status(200).json({ ok: false, erro: `Falha de comunicação com a IA (${provider}): ` + e.message });
         }
