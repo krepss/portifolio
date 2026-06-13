@@ -454,7 +454,7 @@ export default async function handler(req, res) {
 
         let iaResult = "";
 
-        // 4. Conexão com os 3 provedores de IA
+        // 4. Conexão com os provedores de IA (Blindado contra erros de parsing)
         try {
           if (provider === 'gemini') {
             const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`, {
@@ -462,6 +462,7 @@ export default async function handler(req, res) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt + "\n\n" + userPrompt }] }] })
             });
+            if (!gRes.ok) throw new Error(`HTTP ${gRes.status} - ${await gRes.text()}`);
             const gJson = await gRes.json();
             if (gJson.error) throw new Error(gJson.error.message);
             iaResult = gJson.candidates?.[0]?.content?.parts?.[0]?.text || "Erro: Resposta vazia.";
@@ -476,6 +477,7 @@ export default async function handler(req, res) {
                 temperature: 0.1
               })
             });
+            if (!gRes.ok) throw new Error(`HTTP ${gRes.status} - ${await gRes.text()}`);
             const gJson = await gRes.json();
             if (gJson.error) throw new Error(gJson.error.message);
             iaResult = gJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
@@ -491,6 +493,7 @@ export default async function handler(req, res) {
                 max_tokens: 2048
               })
             });
+            if (!nRes.ok) throw new Error(`HTTP ${nRes.status} - ${await nRes.text()}`);
             const nJson = await nRes.json();
             if (nJson.error) throw new Error(nJson.error.message);
             iaResult = nJson.choices?.[0]?.message?.content || "Erro: Resposta vazia.";
@@ -499,7 +502,8 @@ export default async function handler(req, res) {
             throw new Error("Provedor não suportado.");
           }
         } catch (e) {
-          return res.status(200).json({ ok: false, erro: 'Falha na IA ('+provider+'): ' + e.message });
+          // Extrai os primeiros 200 caracteres do erro para não poluir a tela inteira
+          return res.status(200).json({ ok: false, erro: `Falha na IA (${provider}): ${e.message.substring(0, 200)}` });
         }
 
         iaResult = iaResult.replace(/```html/gi, '').replace(/```/g, '').trim();
