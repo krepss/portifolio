@@ -543,10 +543,8 @@ case 'buscarAgentesPorPausa': {
           if (resPres2.entities && resPres2.entities.length > 0) {
             resPres2.entities.forEach(p => {
               let pName = p.name;
-              if (p.languageLabels) {
-                if (p.languageLabels["pt-BR"]) pName = p.languageLabels["pt-BR"];
-                else if (p.languageLabels["pt_BR"]) pName = p.languageLabels["pt_BR"];
-              }
+              if (p.languageLabels && p.languageLabels["pt-BR"]) pName = p.languageLabels["pt-BR"];
+              else if (p.languageLabels && p.languageLabels["pt_BR"]) pName = p.languageLabels["pt_BR"];
               dicPresencasBP[p.id] = pName;
             });
             if (resPres2.entities.length < 100) temMaisPresencas = false;
@@ -577,9 +575,7 @@ case 'buscarAgentesPorPausa': {
         }
 
         membrosIds = [...new Set(membrosIds)];
-        if (membrosIds.length === 0) {
-            return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
-        }
+        if (membrosIds.length === 0) return res.status(200).json({ ok: true, pausas: [], agentesMap: {}, membros: [] });
 
         // 3. Buscar nomes reais fatiados
         let membros = [];
@@ -599,10 +595,11 @@ case 'buscarAgentesPorPausa': {
         const nomeMap = {};
         membros.forEach(m => { nomeMap[m.id] = m.nome; });
 
-        // 4. Buscar timeline de presença no Analytics (COM O CORRETIVO DA API DE PRESENÇA)
+        // 4. Buscar timeline de presença no Analytics
         let allUserDetails = [];
-        for (let i = 0; i < membros.length; i += 50) {
-          const chunkMembros = membros.slice(i, i + 50);
+        // LOTE DE 10 AGENTES: Garante que a API do Genesys não corte dados por limite de banda/tamanho.
+        for (let i = 0; i < membros.length; i += 10) {
+          const chunkMembros = membros.slice(i, i + 10);
           let pageNum = 1;
           let hasMoreAnalytics = true;
           
@@ -617,21 +614,6 @@ case 'buscarAgentesPorPausa': {
                     "dimension": "userId",
                     "value": m.id
                   }))
-              }],
-              // Obriga o Genesys a trazer o histórico mesmo de quem não atendeu ligações
-              "presenceFilters": [{
-                  "type": "or",
-                  "predicates": [
-                    { "type": "dimension", "dimension": "systemPresence", "value": "AVAILABLE" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "AWAY" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "BREAK" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "MEAL" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "MEETING" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "TRAINING" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "BUSY" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "ON_QUEUE" },
-                    { "type": "dimension", "dimension": "systemPresence", "value": "OFFLINE" }
-                  ]
               }]
             };
             
@@ -649,16 +631,21 @@ case 'buscarAgentesPorPausa': {
 
         // 5. Processar userDetails (agrupando por Pausa -> Agente)
         const pausaMap = {}; 
-        const EXCLUIDOS_SYS = new Set(['AVAILABLE', 'ON_QUEUE', 'OFFLINE']);
 
         allUserDetails.forEach(u => {
           const nomeAgente = nomeMap[u.userId] || u.userId;
           (u.primaryPresence || []).forEach(pres => {
-            if (EXCLUIDOS_SYS.has(pres.systemPresence)) return;
-
+            // Busca o ID correto da subpausa
             let pDefId = pres.organizationPresenceId || pres.presenceDefinitionId;
             const traducoesPadrao = { "AWAY": "Ausente", "BREAK": "Pausa Auricular", "MEAL": "Refeição", "MEETING": "Reunião", "TRAINING": "Treinamento", "BUSY": "Ocupado" };
             let nomeStatus = dicPresencasBP[pDefId] || traducoesPadrao[pres.systemPresence] || pres.systemPresence;
+
+            // FILTRO INTELIGENTE: Remove apenas status base de sistema inofensivos.
+            // Se "OFFLINE" for o nome de uma pausa customizada, ele não será bloqueado.
+            const statusUp = nomeStatus.toUpperCase();
+            if (['AVAILABLE', 'DISPONÍVEL', 'ON_QUEUE', 'ON QUEUE', 'FILA', 'OFFLINE'].includes(statusUp)) {
+                return;
+            }
 
             const inicio = new Date(pres.startTime);
             const fim = pres.endTime ? new Date(pres.endTime) : new Date();
