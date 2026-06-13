@@ -428,22 +428,31 @@ export default async function handler(req, res) {
           }
         }
 
-        // Puxa operadores e constrói a lista de tabulações (Mapeado do seu Code.gs)
+        // Puxa operadores, constrói a lista de tabulações e mapeia comunicações digitais
         let nomesAgentes = [];
         let tabulacoesLista = [];
         let communicationIds = [];
 
         (cData.participants || []).forEach(p => {
+          // CORREÇÃO ESTILO CODE.GS: Captura IDs de chat/mensagem de QUALQUER participante da conversa
+          ['messages', 'chats'].forEach(media => {
+            if (p[media] && Array.isArray(p[media])) {
+              p[media].forEach(s => {
+                if (s.id && !communicationIds.includes(s.id)) {
+                  communicationIds.push(s.id);
+                }
+              });
+            }
+          });
+
           if (p.purpose === 'agent' || p.purpose === 'user') {
             let agName = p.name || "Operador Desconhecido";
             if (!nomesAgentes.includes(agName)) nomesAgentes.push(agName);
             
-            // Varre segmentos de sessões digitais para pegar o código de finalização
             let wName = "Sem Tabulação";
             ['messages', 'chats'].forEach(media => {
               if (p[media] && Array.isArray(p[media])) {
                 p[media].forEach(s => {
-                  if (s.id && !communicationIds.includes(s.id)) communicationIds.push(s.id);
                   (s.segments || []).forEach(sg => {
                     if (sg.wrapUpCode) {
                       wName = sg.wrapUpCode.startsWith("ININ-") 
